@@ -2,7 +2,9 @@ package teamworkclassify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -630,5 +632,35 @@ func TestClassifyWithLLMRuleMatchLeadZeroArbiter(t *testing.T) {
 	}
 	if result.Decision != DecisionTeam || result.TargetAgentKey != "coder-agent" {
 		t.Fatalf("rule result wrong: %+v", result)
+	}
+}
+
+// Step 3 fields are inert on the deterministic rule path: a threshold or
+// fallback change must not alter a rule-driven team decision.
+func TestClassifyRuleDecisionIgnoresFallbackAndThreshold(t *testing.T) {
+	settingsFor := func(fallback bool, threshold float64) []teamconfig.RoutingRule {
+		raw := fmt.Sprintf(`{"routing":{"enabled":true,"fallback_to_self":%t,"confidence_threshold":%g,
+			"rules":[{"agent_key":"coder-agent","file_patterns":[".go"]}]}}`, fallback, threshold)
+		r := teamconfig.ParseRouting(json.RawMessage(raw))
+		return teamconfig.EffectiveRules(r, []string{"coder-agent"})
+	}
+	var baseline Result
+	for i, tc := range []struct {
+		fallback  bool
+		threshold float64
+	}{{true, 0.65}, {false, 0.99}, {false, 0.01}} {
+		in := Input{Mode: ModeTeam, Message: "fix internal/foo.go", RoutingRules: settingsFor(tc.fallback, tc.threshold)}
+		got := Classify(context.Background(), in)
+		if got.Decision != DecisionTeam || got.TargetAgentKey != "coder-agent" {
+			t.Fatalf("case %d (fallback=%v threshold=%v): got %+v, want team/coder-agent", i, tc.fallback, tc.threshold, got)
+		}
+		if i == 0 {
+			baseline = got
+			continue
+		}
+		if got.Decision != baseline.Decision || got.TargetAgentKey != baseline.TargetAgentKey ||
+			got.RequiredTool != baseline.RequiredTool || got.WorkflowHint != baseline.WorkflowHint {
+			t.Fatalf("case %d result %+v differs from baseline %+v", i, got, baseline)
+		}
 	}
 }

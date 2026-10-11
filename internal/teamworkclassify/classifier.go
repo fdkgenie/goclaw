@@ -92,6 +92,8 @@ func Classify(ctx context.Context, input Input) Result {
 		return Result{Decision: DecisionSelf, Reason: "empty message"}
 	}
 	// Operator rules run before every heuristic — explicit config beats inference.
+	// Routing.FallbackToSelf and Routing.ConfidenceThreshold do not apply here;
+	// they gate only the Step 3 decision model.
 	if rule, ok := firstMatchingRoutingRule(input); ok {
 		return Result{
 			Decision:       DecisionTeam,

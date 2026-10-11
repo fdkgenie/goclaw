@@ -31,6 +31,9 @@ type RoutingRule struct {
 // Routing is the team-settings routing block. Absent block = feature off.
 type Routing struct {
 	Enabled             *bool         `json:"enabled"`
+	// FallbackToSelf and ConfidenceThreshold are reserved for the Step 3 decision
+	// model (confidence gating of its output). The Step 2 deterministic rule path
+	// ignores them: a keyword/file match routes with Confidence=1 regardless.
 	FallbackToSelf      *bool         `json:"fallback_to_self"`     // nil = true
 	ConfidenceThreshold *float64      `json:"confidence_threshold"` // nil = 0.65
 	Rules               []RoutingRule `json:"rules"`
