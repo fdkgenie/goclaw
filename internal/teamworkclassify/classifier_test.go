@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
+	"github.com/nextlevelbuilder/goclaw/internal/teamconfig"
 )
 
 type fakeEmbedder map[string][]float32
@@ -553,5 +554,81 @@ func TestClassifyMarksAmbiguousOnlyForCloseOrWeakScores(t *testing.T) {
 				t.Fatalf("Ambiguous = %v, want %v (result=%+v)", got, tc.want, Classify(context.Background(), tc.input))
 			}
 		})
+	}
+}
+
+func TestClassifyRuleMatchWinsOverCasualGuard(t *testing.T) {
+	// Message is short ("ok go") — casual guard would normally claim it, but
+	// the operator rule must win (explicit config beats heuristic).
+	rule := teamconfig.RoutingRule{AgentKey: "coder-agent", Keywords: []string{"go"}}
+	in := decisiveTeamInput()
+	in.Message = "ok go"
+	in.RoutingRules = []teamconfig.RoutingRule{rule}
+	in.TeamRole = "lead"
+	in.CanAssignTeamTasks = true
+	result := Classify(context.Background(), in)
+	if result.Decision != DecisionTeam || result.TargetAgentKey != "coder-agent" {
+		t.Fatalf("rule must win over casual guard, got %+v", result)
+	}
+	if result.RequiredTool != "team_tasks" || !strings.Contains(result.WorkflowHint, "search") || !strings.Contains(result.WorkflowHint, "coder-agent") {
+		t.Fatalf("rule hint wrong: %+v", result)
+	}
+}
+
+func TestClassifyRuleMatchNoEmbedder(t *testing.T) {
+	// Rule-matched messages route even with no embedder (spec success #2).
+	rule := teamconfig.RoutingRule{AgentKey: "coder-agent", FilePatterns: []string{".go"}}
+	in := Input{Mode: ModeTeam, Message: "fix internal/foo.go", RoutingRules: []teamconfig.RoutingRule{rule}}
+	result := Classify(context.Background(), in)
+	if result.Decision != DecisionTeam {
+		t.Fatalf("rule must route without embedder, got %+v", result)
+	}
+}
+
+func TestClassifyRuleStaleMemberIgnored(t *testing.T) {
+	// EffectiveRules already dropped this — but test the classifier contract:
+	// a rule naming a member absent from RoutingRules must not fire.
+	in := decisiveTeamInput()
+	in.Message = "fix internal/foo.go"
+	in.RoutingRules = nil // stale rule removed by EffectiveRules
+	result := Classify(context.Background(), in)
+	if result.TargetAgentKey != "" {
+		t.Fatalf("no routing target expected, got %q", result.TargetAgentKey)
+	}
+}
+
+func TestClassifyWithLLMRuleMatchPermissionGateMember(t *testing.T) {
+	// Rule-driven team decision + member without member_requests → DecisionSelf.
+	provider := &fakeArbiterProvider{content: `{"decision":"team"}`}
+	rule := teamconfig.RoutingRule{AgentKey: "peer-agent", Keywords: []string{"go"}}
+	in := decisiveTeamInput()
+	in.Message = "go fix it"
+	in.RoutingRules = []teamconfig.RoutingRule{rule}
+	in.TeamRole = "member"
+	in.CanAssignTeamTasks = false
+	in.MemberRequestsEnabled = false
+	result := ClassifyWithLLM(context.Background(), in, provider, "m", nil)
+	if provider.calls != 0 {
+		t.Fatalf("no arbiter for rule match, calls=%d", provider.calls)
+	}
+	if result.Decision != DecisionSelf {
+		t.Fatalf("member without permission must be gated to self, got %+v", result)
+	}
+}
+
+func TestClassifyWithLLMRuleMatchLeadZeroArbiter(t *testing.T) {
+	provider := &fakeArbiterProvider{content: `{"decision":"self"}`}
+	rule := teamconfig.RoutingRule{AgentKey: "coder-agent", FilePatterns: []string{".go"}}
+	in := decisiveTeamInput()
+	in.Message = "fix internal/foo.go"
+	in.RoutingRules = []teamconfig.RoutingRule{rule}
+	in.TeamRole = "lead"
+	in.CanAssignTeamTasks = true
+	result := ClassifyWithLLM(context.Background(), in, provider, "m", nil)
+	if provider.calls != 0 {
+		t.Fatalf("rule match must skip arbiter, calls=%d", provider.calls)
+	}
+	if result.Decision != DecisionTeam || result.TargetAgentKey != "coder-agent" {
+		t.Fatalf("rule result wrong: %+v", result)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
+	"github.com/nextlevelbuilder/goclaw/internal/teamconfig"
 	usagecaps "github.com/nextlevelbuilder/goclaw/internal/usage/caps"
 )
 
@@ -43,6 +44,7 @@ type Embedder interface {
 type Profile struct {
 	Kind string
 	Name string
+	Key  string // agent_key for members/delegates; empty for tools/capabilities
 	Text string
 }
 
@@ -59,6 +61,7 @@ type Input struct {
 	CanAssignTeamTasks         bool
 	MemberRequestsEnabled      bool
 	MemberRequestsAutoDispatch bool
+	RoutingRules               []teamconfig.RoutingRule // populated by BuildInputFromStores
 	Embedder                   Embedder
 	CloseMargin                float64
 	TeamThreshold              float64
@@ -87,6 +90,18 @@ func Classify(ctx context.Context, input Input) Result {
 	}
 	if strings.TrimSpace(input.Message) == "" {
 		return Result{Decision: DecisionSelf, Reason: "empty message"}
+	}
+	// Operator rules run before every heuristic — explicit config beats inference.
+	if rule, ok := firstMatchingRoutingRule(input); ok {
+		return Result{
+			Decision:       DecisionTeam,
+			Confidence:     1,
+			Reason:         "matched team routing rule for member " + rule.AgentKey,
+			Mode:           input.Mode,
+			RequiredTool:   "team_tasks",
+			WorkflowHint:   routingRuleHint(rule.AgentKey),
+			TargetAgentKey: rule.AgentKey,
+		}
 	}
 	if looksCasualOrSmallDirect(input.Message) {
 		return Result{Decision: DecisionSelf, Reason: "message looks casual or direct"}
@@ -458,6 +473,32 @@ func requiredToolForMode(mode Mode) string {
 	default:
 		return ""
 	}
+}
+
+// firstMatchingRoutingRule returns the first routing rule whose keyword or
+// file pattern matches the message. Rules are already membership-validated
+// (EffectiveRules) — a stale rule can never reach here.
+func firstMatchingRoutingRule(input Input) (teamconfig.RoutingRule, bool) {
+	msg := strings.TrimSpace(input.Message)
+	for _, rule := range input.RoutingRules {
+		if teamconfig.RuleMatchesMessage(rule, msg) {
+			return rule, true
+		}
+	}
+	return teamconfig.RoutingRule{}, false
+}
+
+// routingRuleHint returns the search-first workflow hint required by
+// team_tasks create, with the validated member's agent_key interpolated.
+// team_tasks create is hard-gated on a prior search/list call
+// (internal/tools/team_tasks_create.go:50) and the directive retry only
+// fires at iteration 0, so a hint that says "call create" produces a
+// rejected tool call + exhausted retry + blocker. Always search-first.
+func routingRuleHint(agentKey string) string {
+	return fmt.Sprintf(
+		`Use team_tasks(action="search" or "list") first, then team_tasks(action="create", assignee="%s", ...) to assign this work to that member.`,
+		agentKey,
+	)
 }
 
 func looksCasualOrSmallDirect(message string) bool {
