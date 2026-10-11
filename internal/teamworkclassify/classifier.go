@@ -74,20 +74,25 @@ type Result struct {
 	Mode               Mode
 	RequiredTool       string
 	WorkflowHint       string
+	TargetAgentKey     string // set only for a rule-driven team decision (Step 2, Task 4)
+	// Ambiguous reports that the embedding evidence did not decide the outcome
+	// and an arbiter (LLM or decision model) may be consulted. False means the
+	// decision is final and consulting an arbiter would only add cost and latency.
+	Ambiguous bool
 }
 
 func Classify(ctx context.Context, input Input) Result {
 	if input.Mode == "" || input.Mode == ModeSpawn {
 		return Result{Decision: DecisionSelf, Reason: "no team or delegate capability"}
 	}
-	if input.Embedder == nil {
-		return Result{Decision: DecisionSelf, Reason: "embedding unavailable"}
-	}
 	if strings.TrimSpace(input.Message) == "" {
 		return Result{Decision: DecisionSelf, Reason: "empty message"}
 	}
 	if looksCasualOrSmallDirect(input.Message) {
 		return Result{Decision: DecisionSelf, Reason: "message looks casual or direct"}
+	}
+	if input.Embedder == nil {
+		return Result{Decision: DecisionSelf, Reason: "embedding unavailable"}
 	}
 
 	timeout := input.Timeout
@@ -124,6 +129,7 @@ func Classify(ctx context.Context, input Input) Result {
 	bestScore := math.Max(selfScore, collabScore)
 	switch {
 	case math.Abs(diff) <= margin:
+		// Close margin: this is the ambiguous flip case — arbiter may help.
 		return Result{
 			Decision:           DecisionSelf,
 			Confidence:         bestScore,
@@ -131,6 +137,7 @@ func Classify(ctx context.Context, input Input) Result {
 			SelfScore:          selfScore,
 			CollaborationScore: collabScore,
 			Mode:               input.Mode,
+			Ambiguous:          true,
 		}
 	case diff > margin && collabScore >= threshold:
 		return Result{
@@ -142,7 +149,20 @@ func Classify(ctx context.Context, input Input) Result {
 			Mode:               input.Mode,
 			RequiredTool:       requiredToolForMode(input.Mode),
 		}
+	case diff > margin:
+		// Closer to collaboration but below the team threshold — weak absolute
+		// score, let the arbiter decide.
+		return Result{
+			Decision:           DecisionSelf,
+			Confidence:         -diff,
+			Reason:             "request is closer to current agent capability",
+			SelfScore:          selfScore,
+			CollaborationScore: collabScore,
+			Mode:               input.Mode,
+			Ambiguous:          true,
+		}
 	default:
+		// diff < -margin: decisively self.
 		return Result{
 			Decision:           DecisionSelf,
 			Confidence:         -diff,
@@ -156,10 +176,25 @@ func Classify(ctx context.Context, input Input) Result {
 
 func ClassifyWithLLM(ctx context.Context, input Input, provider providers.Provider, model string, caps *usagecaps.Service) Result {
 	fallback := Classify(ctx, input)
-	if input.Mode == "" || input.Mode == ModeSpawn || provider == nil || strings.TrimSpace(model) == "" {
-		return forceSelfDecision(fallback, "arbiter unavailable: ")
+	result := fallback
+
+	switch {
+	case !fallback.Ambiguous:
+		// Evidence decided the outcome; the arbiter would only add cost and
+		// latency. result stays the evidence verdict.
+	case input.Mode == "" || input.Mode == ModeSpawn || provider == nil || strings.TrimSpace(model) == "":
+		result = forceSelfDecision(fallback, "arbiter unavailable: ")
+	default:
+		result = consultArbiter(ctx, input, fallback, provider, model, caps)
 	}
 
+	return applyTeamPermissionGate(input, result)
+}
+
+// consultArbiter performs the expensive lead-model arbitration call. Only
+// invoked when embedding evidence is ambiguous. Falls back to the evidence
+// decision on call or parse failure.
+func consultArbiter(ctx context.Context, input Input, fallback Result, provider providers.Provider, model string, caps *usagecaps.Service) Result {
 	timeout := input.Timeout
 	if timeout <= 0 {
 		timeout = defaultArbiterTimeout
@@ -216,7 +251,7 @@ func ClassifyWithLLM(ctx context.Context, input Input, provider providers.Provid
 	if result.Reason == "" {
 		result.Reason = fallback.Reason
 	}
-	return applyTeamPermissionGate(input, result)
+	return result
 }
 
 func forceSelfDecision(evidence Result, reasonPrefix string) Result {
