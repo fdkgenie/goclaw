@@ -2,12 +2,12 @@ package teamworkclassify
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
+	"github.com/nextlevelbuilder/goclaw/internal/teamconfig"
 )
 
 type ProfileStores struct {
@@ -58,7 +58,7 @@ func BuildInputFromStores(ctx context.Context, stores ProfileStores, opts BuildI
 				input.TeamRole = "lead"
 				input.CanAssignTeamTasks = true
 			}
-			memberRequestCfg := parseMemberRequestRoutingConfig(team.Settings)
+			memberRequestCfg := teamconfig.ParseMemberRequest(team.Settings)
 			input.MemberRequestsEnabled = memberRequestCfg.Enabled
 			input.MemberRequestsAutoDispatch = memberRequestCfg.AutoDispatch
 			input.Team = Profile{
@@ -117,34 +117,6 @@ func BuildInputFromStores(ctx context.Context, stores ProfileStores, opts BuildI
 	}
 	input.CollaborationTools = append(input.CollaborationTools, opts.ExtraCollab...)
 	return input
-}
-
-type memberRequestRoutingConfig struct {
-	Enabled      bool
-	AutoDispatch bool
-}
-
-func parseMemberRequestRoutingConfig(settings json.RawMessage) memberRequestRoutingConfig {
-	var cfg memberRequestRoutingConfig
-	if len(settings) == 0 {
-		return cfg
-	}
-	var raw struct {
-		MemberRequests *struct {
-			Enabled      *bool `json:"enabled"`
-			AutoDispatch *bool `json:"auto_dispatch"`
-		} `json:"member_requests"`
-	}
-	if json.Unmarshal(settings, &raw) != nil || raw.MemberRequests == nil {
-		return cfg
-	}
-	if raw.MemberRequests.Enabled != nil {
-		cfg.Enabled = *raw.MemberRequests.Enabled
-	}
-	if raw.MemberRequests.AutoDispatch != nil {
-		cfg.AutoDispatch = *raw.MemberRequests.AutoDispatch
-	}
-	return cfg
 }
 
 func teamPermissionProfiles(input Input) []Profile {
