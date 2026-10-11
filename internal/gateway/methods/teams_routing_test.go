@@ -21,6 +21,12 @@ type routingTeamStore struct {
 	members   []store.TeamMemberData
 	lastSet   map[string]any
 	createdTm *store.TeamData
+	hasAccess bool
+	updated   bool
+}
+
+func (s *routingTeamStore) HasTeamAccess(_ context.Context, _ uuid.UUID, _ string) (bool, error) {
+	return s.hasAccess, nil
 }
 
 func (s *routingTeamStore) GetTeam(_ context.Context, _ uuid.UUID) (*store.TeamData, error) {
@@ -36,6 +42,7 @@ func (s *routingTeamStore) ListMembers(_ context.Context, _ uuid.UUID) ([]store.
 }
 
 func (s *routingTeamStore) UpdateTeam(_ context.Context, _ uuid.UUID, updates map[string]any) error {
+	s.updated = true
 	s.lastSet = updates
 	return nil
 }
@@ -63,7 +70,12 @@ func (s *routingAgentStore) GetByKey(_ context.Context, key string) (*store.Agen
 // error code, and raw payload.
 func callRPC(t *testing.T, handler func(context.Context, *gateway.Client, *protocol.RequestFrame), params map[string]any) (bool, string, json.RawMessage) {
 	t.Helper()
-	client, frames := gateway.NewCapturingTestClient(permissions.RoleAdmin, uuid.Nil, "op-1", 4)
+	return callRPCAs(t, permissions.RoleAdmin, handler, params)
+}
+
+func callRPCAs(t *testing.T, role permissions.Role, handler func(context.Context, *gateway.Client, *protocol.RequestFrame), params map[string]any) (bool, string, json.RawMessage) {
+	t.Helper()
+	client, frames := gateway.NewCapturingTestClient(role, uuid.Nil, "op-1", 4)
 	raw, _ := json.Marshal(params)
 	handler(context.Background(), client, &protocol.RequestFrame{ID: "1", Params: raw})
 	select {
@@ -224,5 +236,49 @@ func TestTeamsCreatePassesRoutingThrough(t *testing.T) {
 		len(round.Routing.Rules) != 1 || round.Routing.Rules[0].AgentKey != "a" ||
 		len(round.Routing.Rules[0].Keywords) != 1 || round.Routing.Rules[0].Keywords[0] != "go" {
 		t.Fatalf("routing mangled on create: %s", st.createdTm.Settings)
+	}
+}
+
+func TestTeamsUpdateRequiresTeamAccessForNonAdmin(t *testing.T) {
+	cases := []struct {
+		name       string
+		hasAccess  bool
+		wantOK     bool
+		wantUpdate bool
+	}{
+		{"non-member non-admin is denied", false, false, false},
+		{"member non-admin is allowed", true, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st, m := newRoutingUpdateFixture("coder-agent")
+			st.hasAccess = tc.hasAccess
+			ok, code, _ := callRPCAs(t, permissions.RoleOperator, m.handleUpdate, updateParams(st.team.ID, map[string]any{
+				"routing": map[string]any{"enabled": true, "rules": []map[string]any{{"agent_key": "coder-agent"}}},
+			}))
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v (code %q), want %v", ok, code, tc.wantOK)
+			}
+			if !tc.wantOK && code != protocol.ErrNotFound {
+				t.Fatalf("code = %q, want %q (must not leak existence)", code, protocol.ErrNotFound)
+			}
+			if st.updated != tc.wantUpdate {
+				t.Fatalf("UpdateTeam called = %v, want %v", st.updated, tc.wantUpdate)
+			}
+		})
+	}
+}
+
+func TestTeamsUpdateAdminBypassesTeamAccess(t *testing.T) {
+	st, m := newRoutingUpdateFixture("coder-agent")
+	st.hasAccess = false
+	ok, code, _ := callRPC(t, m.handleUpdate, updateParams(st.team.ID, map[string]any{
+		"routing": map[string]any{"enabled": true, "rules": []map[string]any{{"agent_key": "coder-agent"}}},
+	}))
+	if !ok {
+		t.Fatalf("admin update rejected: %s", code)
+	}
+	if !st.updated {
+		t.Fatal("admin update did not reach UpdateTeam")
 	}
 }

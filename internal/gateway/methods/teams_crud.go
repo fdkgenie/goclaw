@@ -291,6 +291,15 @@ func (m *TeamsMethods) handleUpdate(ctx context.Context, client *gateway.Client,
 		return
 	}
 
+	// Non-admin callers must have team access to update.
+	if !permissions.HasMinRole(client.Role(), permissions.RoleAdmin) {
+		callerID := store.UserIDFromContext(ctx)
+		if ok, err := m.teamStore.HasTeamAccess(ctx, teamID, callerID); err != nil || !ok {
+			client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrNotFound, i18n.T(locale, i18n.MsgNotFound, "team", params.TeamID)))
+			return
+		}
+	}
+
 	// Validate team exists
 	team, err := m.teamStore.GetTeam(ctx, teamID)
 	if err != nil {
