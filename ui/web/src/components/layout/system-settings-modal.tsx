@@ -19,6 +19,11 @@ import { EMBEDDING_MODELS, DEFAULT_EMBEDDING_MODELS, DEFAULTS, parseBool, type I
 import { SystemSettingsEmbeddingCard } from "./system-settings-embedding-card";
 import { SystemSettingsCompactionCard } from "./system-settings-compaction-card";
 import { SystemSettingsSkillsCard } from "./system-settings-skills-card";
+import {
+  SystemSettingsDecisionModelCard,
+  DECISION_MODEL_DEFAULTS,
+  type DecisionModelConfigState,
+} from "./system-settings-decision-model-card";
 
 interface SystemSettingsModalProps {
   open: boolean;
@@ -55,6 +60,10 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
   const [intentClassify, setIntentClassify] = useState(true);
   const [teamWorkClassify, setTeamWorkClassify] = useState(false);
   const [hasTeamRoutingRules, setHasTeamRoutingRules] = useState(false);
+  // Decision Model (System One)
+  const [decisionModel, setDecisionModel] = useState<DecisionModelConfigState>(DECISION_MODEL_DEFAULTS);
+  const [initDecisionModel, setInitDecisionModel] = useState<DecisionModelConfigState>(DECISION_MODEL_DEFAULTS);
+
 
   // Compaction
   const [compProvider, setCompProvider] = useState("");
@@ -125,9 +134,12 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
         .then((r) => r.settings as { extraction_provider?: string; extraction_model?: string; min_confidence?: number } | undefined)
         .catch(() => undefined),
       ws.call<TeamsListResponse>(Methods.TEAMS_LIST, {}).catch((): TeamsListResponse => ({ teams: [] })),
+      http.get<DecisionModelConfigState>("/v1/decision-model/config").catch((): DecisionModelConfigState => DECISION_MODEL_DEFAULTS),
     ])
-      .then(([configs, kgSettings, teamsRes]) => {
+      .then(([configs, kgSettings, teamsRes, dmCfg]) => {
         applyConfigs(configs, kgSettings);
+        setDecisionModel(dmCfg);
+        setInitDecisionModel(dmCfg);
         setHasTeamRoutingRules((teamsRes.teams ?? []).some(({ settings }) => {
           const routing = settings?.routing;
           return routing?.enabled !== false
@@ -175,6 +187,10 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
         await http.put("/v1/tools/builtin/knowledge_graph_search", {
           settings: { extraction_provider: kgProvider, extraction_model: kgModel, min_confidence: Number(kgMinConfidence) || 0.75, extract_on_memory_write: !!(kgProvider && kgModel) },
         });
+      }
+      const dmChanged = JSON.stringify(decisionModel) !== JSON.stringify(initDecisionModel);
+      if (dmChanged) {
+        await http.post("/v1/decision-model/config", decisionModel);
       }
       toast.success(t("saved")); onOpenChange(false);
     } catch (err) { toast.error(err instanceof Error ? err.message : t("saveFailed")); }
@@ -251,6 +267,11 @@ export function SystemSettingsModal({ open, onOpenChange }: SystemSettingsModalP
             </Card>
 
             <FeatureSwitchGroup title={t("ux.title")} description={t("ux.description")} items={uxItems} />
+
+            <SystemSettingsDecisionModelCard
+              value={decisionModel}
+              onChange={(patch) => setDecisionModel((prev) => ({ ...prev, ...patch }))}
+            />
 
             <SystemSettingsSkillsCard
               uploadMaxSize={skillUploadMaxSize}
