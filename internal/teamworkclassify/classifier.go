@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nextlevelbuilder/goclaw/internal/decisionmodel"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/teamconfig"
 	usagecaps "github.com/nextlevelbuilder/goclaw/internal/usage/caps"
@@ -62,10 +63,16 @@ type Input struct {
 	MemberRequestsEnabled      bool
 	MemberRequestsAutoDispatch bool
 	RoutingRules               []teamconfig.RoutingRule // populated by BuildInputFromStores
-	Embedder                   Embedder
-	CloseMargin                float64
-	TeamThreshold              float64
-	Timeout                    time.Duration
+	// Decision-model settings, from the team's routing block. Decider is set by
+	// the call site only when the tenant has opted in; nil means "never egress".
+	RoutingEnabled         bool
+	DecisionThreshold      float64
+	DecisionFallbackToSelf bool
+	Decider                decisionmodel.Decider
+	Embedder               Embedder
+	CloseMargin            float64
+	TeamThreshold          float64
+	Timeout                time.Duration
 }
 
 type Result struct {
@@ -82,6 +89,21 @@ type Result struct {
 	// and an arbiter (LLM or decision model) may be consulted. False means the
 	// decision is final and consulting an arbiter would only add cost and latency.
 	Ambiguous bool
+	// DecidedBy is "decision_model" when the decision model was consulted
+	// (whatever it answered); empty otherwise.
+	DecidedBy string
+}
+
+// Source labels where the verdict came from, for the directive and decision log.
+func (r Result) Source() string {
+	switch {
+	case r.DecidedBy != "":
+		return r.DecidedBy
+	case r.Ambiguous:
+		return "arbiter"
+	default:
+		return "evidence"
+	}
 }
 
 func Classify(ctx context.Context, input Input) Result {
@@ -199,6 +221,10 @@ func ClassifyWithLLM(ctx context.Context, input Input, provider providers.Provid
 	case !fallback.Ambiguous:
 		// Evidence decided the outcome; the arbiter would only add cost and
 		// latency. result stays the evidence verdict.
+	case input.Decider != nil && input.Mode == ModeTeam && input.RoutingEnabled:
+		// Replaces the LLM arbiter for opted-in teams. Never falls through to
+		// the arbiter on failure: that would reintroduce its cost on every blip.
+		result = consultDecider(ctx, input, fallback)
 	case input.Mode == "" || input.Mode == ModeSpawn || provider == nil || strings.TrimSpace(model) == "":
 		result = forceSelfDecision(fallback, "arbiter unavailable: ")
 	default:
@@ -269,6 +295,76 @@ func consultArbiter(ctx context.Context, input Input, fallback Result, provider 
 		result.Reason = fallback.Reason
 	}
 	return result
+}
+
+// consultDecider asks the decision model which current member should take an
+// ambiguous message. Options are the team's members by agent_key (rubric =
+// rule criteria, else the member profile text) plus "self". Every non-routing
+// outcome (error, "self", invented id, low confidence with fallback) returns
+// the evidence verdict unchanged, so a transport failure never reads as "self"
+// in logs and never produces a team directive.
+func consultDecider(ctx context.Context, input Input, fallback Result) Result {
+	criteria := make(map[string]string, len(input.RoutingRules))
+	for _, rule := range input.RoutingRules {
+		if c := strings.TrimSpace(rule.Criteria); c != "" {
+			criteria[rule.AgentKey] = c
+		}
+	}
+	options := make(map[string]string, len(input.Members))
+	for _, m := range input.Members {
+		// The sender is represented by "self"; offering its own key too would
+		// let the model "delegate" to the agent that is already handling it.
+		if m.Key == "" || m.Key == input.CurrentAgent.Key {
+			continue
+		}
+		if c, ok := criteria[m.Key]; ok {
+			options[m.Key] = c
+		} else {
+			options[m.Key] = renderProfile(m)
+		}
+	}
+	fallback.DecidedBy = "decision_model"
+	if len(options) == 0 {
+		fallback.Reason = "decision_model: no members to choose from: " + fallback.Reason
+		return fallback
+	}
+	var extra map[string]string
+	if input.TeamRole != "" {
+		extra = map[string]string{"sender_team_role": input.TeamRole}
+	}
+	dec, err := input.Decider.Decide(ctx, decisionmodel.State{Message: input.Message, Options: options, Extra: extra})
+	if err != nil {
+		slog.Warn("team_work_classify: decision model unavailable", "error", err)
+		fallback.Reason = "decision_model_unavailable: " + fallback.Reason
+		return fallback
+	}
+	target := dec.Accept(options, input.DecisionThreshold, input.DecisionFallbackToSelf)
+	if target == "" {
+		if dec.Option != decisionmodel.SelfOption && !isOffered(options, dec.Option) {
+			slog.Warn("team_work_classify: decision model returned an option that was not offered", "option", dec.Option, "model", dec.Model)
+		}
+		fallback.Reason = fmt.Sprintf("decision_model chose %q (confidence %.2f, model %s); keeping evidence verdict: %s",
+			dec.Option, dec.Confidence, dec.Model, fallback.Reason)
+		return fallback
+	}
+	return Result{
+		Decision:           DecisionTeam,
+		Confidence:         dec.Confidence,
+		Reason:             fmt.Sprintf("decision_model chose member %s (confidence %.2f, model %s)", target, dec.Confidence, dec.Model),
+		SelfScore:          fallback.SelfScore,
+		CollaborationScore: fallback.CollaborationScore,
+		Mode:               input.Mode,
+		RequiredTool:       "team_tasks",
+		WorkflowHint:       routingRuleHint(target),
+		TargetAgentKey:     target,
+		Ambiguous:          true,
+		DecidedBy:          "decision_model",
+	}
+}
+
+func isOffered(options map[string]string, id string) bool {
+	_, ok := options[id]
+	return ok
 }
 
 func forceSelfDecision(evidence Result, reasonPrefix string) Result {

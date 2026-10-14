@@ -41,6 +41,7 @@ func BuildInputFromStores(ctx context.Context, stores ProfileStores, opts BuildI
 			input.CurrentAgent = Profile{
 				Kind: "agent",
 				Name: firstNonEmpty(ag.DisplayName, ag.AgentKey),
+				Key:  ag.AgentKey,
 				Text: strings.TrimSpace(strings.Join([]string{
 					ag.Frontmatter,
 					ag.AgentDescription,
@@ -90,7 +91,14 @@ func BuildInputFromStores(ctx context.Context, stores ProfileStores, opts BuildI
 					})
 				}
 			}
-			input.RoutingRules = teamconfig.EffectiveRules(teamconfig.ParseRouting(team.Settings), memberKeys)
+			routing := teamconfig.ParseRouting(team.Settings)
+			input.RoutingRules = teamconfig.EffectiveRules(routing, memberKeys)
+			input.RoutingEnabled = routing.Enabled != nil && *routing.Enabled
+			input.DecisionFallbackToSelf = routing.FallbackToSelf == nil || *routing.FallbackToSelf
+			input.DecisionThreshold = 0.65
+			if routing.ConfidenceThreshold != nil {
+				input.DecisionThreshold = *routing.ConfidenceThreshold
+			}
 			input.CollaborationTools = append(input.CollaborationTools, teamPermissionProfiles(input)...)
 		}
 	}
