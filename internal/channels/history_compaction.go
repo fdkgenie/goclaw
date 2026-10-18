@@ -58,8 +58,8 @@ func (ph *PendingHistory) MaybeCompact(historyKey string, currentCount int, cfg 
 // Reused by both auto-compact (channel) and HTTP compact endpoint.
 // Returns the number of entries remaining after compaction.
 func CompactGroup(ctx context.Context, s store.PendingMessageStore, channelName, historyKey string, provider providers.Provider, model string, keepRecent, maxTokens int, usageCaps *usagecaps.Service) (int, error) {
-	if keepRecent <= 0 {
-		keepRecent = 40
+	if keepRecent < 0 {
+		keepRecent = 0
 	}
 	if maxTokens <= 0 {
 		maxTokens = 4096
@@ -69,6 +69,12 @@ func CompactGroup(ctx context.Context, s store.PendingMessageStore, channelName,
 	entries, err := s.ListByKey(ctx, channelName, historyKey)
 	if err != nil {
 		return 0, fmt.Errorf("list entries: %w", err)
+	}
+	if len(entries) == 0 {
+		return 0, nil
+	}
+	if len(entries) == 1 && entries[0].IsSummary {
+		return 1, nil
 	}
 	if keepRecent >= len(entries) {
 		return len(entries), nil // nothing to summarize
@@ -105,6 +111,8 @@ func CompactGroup(ctx context.Context, s store.PendingMessageStore, channelName,
 		Options: map[string]any{"max_tokens": maxTokens, "temperature": 0.3},
 	}
 	resp, err := usageCaps.Chat(ctx, provider, req, usagecaps.ChatOptions{
+		TenantID:        store.TenantIDFromContext(ctx),
+		ProviderName:    provider.Name(),
 		ModelID:         model,
 		Purpose:         "pending-history-compaction",
 		MaxOutputTokens: maxTokens,
@@ -202,7 +210,11 @@ func (ph *PendingHistory) runCompaction(historyKey string, cfg *CompactionConfig
 		return
 	}
 
-	_, err = CompactGroup(ctx, ph.store, ph.channelName, historyKey, cfg.Provider, cfg.Model, cfg.KeepRecent, cfg.MaxTokens, cfg.UsageCaps)
+	keepRecent := cfg.KeepRecent
+	if keepRecent <= 0 {
+		keepRecent = 40
+	}
+	_, err = CompactGroup(ctx, ph.store, ph.channelName, historyKey, cfg.Provider, cfg.Model, keepRecent, cfg.MaxTokens, cfg.UsageCaps)
 	if err != nil {
 		slog.Warn("compaction.failed", "channel", ph.channelName, "key", historyKey, "error", err)
 		return

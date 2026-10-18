@@ -137,6 +137,7 @@ func (h *PendingMessagesHandler) handleDelete(w http.ResponseWriter, r *http.Req
 type compactRequest struct {
 	ChannelName string `json:"channel_name"`
 	HistoryKey  string `json:"history_key"`
+	KeepRecent  *int   `json:"keep_recent,omitempty"`
 }
 
 // POST /v1/pending-messages/compact — LLM-based summarization of old messages, keeping recent ones.
@@ -149,6 +150,20 @@ func (h *PendingMessagesHandler) handleCompact(w http.ResponseWriter, r *http.Re
 	}
 	if req.ChannelName == "" || req.HistoryKey == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgRequired, "channel_name and history_key")})
+		return
+	}
+	// Check existing entries before spawning background work
+	entries, err := h.store.ListByKey(r.Context(), req.ChannelName, req.HistoryKey)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if len(entries) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "remaining": 0, "method": "none"})
+		return
+	}
+	if len(entries) == 1 && entries[0].IsSummary {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "remaining": 1, "method": "already_compacted"})
 		return
 	}
 
@@ -165,17 +180,26 @@ func (h *PendingMessagesHandler) handleCompact(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Run compaction in background so the HTTP response returns immediately.
-	// The long-running LLM call (30-120s) was blocking the response, which
-	// caused browser WebSocket connections to drop (pong timeout).
-	keepRecent := h.keepRecent
-	if keepRecent <= 0 {
-		keepRecent = 15
+	// Manual compaction defaults to summarizing all messages (keepRecent = 0),
+	// unless explicitly requested otherwise.
+	keepRecent := 0
+	if req.KeepRecent != nil {
+		keepRecent = *req.KeepRecent
+		if keepRecent < 0 {
+			keepRecent = 0
+		}
 	}
+	// If requested keepRecent would keep all entries, fall back to 0
+	// so the messages are compacted into a clean summary instead of no-oping.
+	if keepRecent >= len(entries) {
+		keepRecent = 0
+	}
+
 	tenantID := store.TenantIDFromContext(r.Context())
 	go func() {
 		ctx, cancel := context.WithTimeout(store.WithTenantID(context.Background(), tenantID), 180*time.Second)
 		defer cancel()
+		slog.Info("compact.started", "channel", req.ChannelName, "key", req.HistoryKey, "provider", provider.Name(), "model", model, "keep_recent", keepRecent)
 		remaining, err := channels.CompactGroup(ctx, h.store, req.ChannelName, req.HistoryKey, provider, model, keepRecent, h.maxTokens, h.usageCaps)
 		if err != nil {
 			slog.Warn("compact.failed", "channel", req.ChannelName, "key", req.HistoryKey, "error", err)
