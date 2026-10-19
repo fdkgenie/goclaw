@@ -92,7 +92,7 @@ func (m *TeamsMethods) handleTaskCreate(ctx context.Context, client *gateway.Cli
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{"task": task}))
 
 	if m.msgBus != nil {
-		m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskCreated, protocol.TeamTaskEventPayload{
+		m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskCreated, protocol.TeamTaskEventPayload{
 			TeamID:     teamID.String(),
 			TaskID:     task.ID.String(),
 			TaskNumber: task.TaskNumber,
@@ -107,7 +107,7 @@ func (m *TeamsMethods) handleTaskCreate(ctx context.Context, client *gateway.Cli
 		}))
 
 		if autoAssignedAgentID != uuid.Nil {
-			m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskAssigned, protocol.TeamTaskEventPayload{
+			m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskAssigned, protocol.TeamTaskEventPayload{
 				TeamID:        teamID.String(),
 				TaskID:        task.ID.String(),
 				Status:        store.TeamTaskStatusInProgress,
@@ -183,7 +183,7 @@ func (m *TeamsMethods) handleTaskAssign(ctx context.Context, client *gateway.Cli
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{"ok": true}))
 
 	if m.msgBus != nil {
-		m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskAssigned, protocol.TeamTaskEventPayload{
+		m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskAssigned, protocol.TeamTaskEventPayload{
 			TeamID:    teamID.String(),
 			TaskID:    taskID.String(),
 			Status:    store.TeamTaskStatusInProgress,
@@ -255,7 +255,7 @@ func (m *TeamsMethods) handleTaskDelete(ctx context.Context, client *gateway.Cli
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{"ok": true}))
 
 	if m.msgBus != nil {
-		m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskDeleted, protocol.TeamTaskEventPayload{
+		m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskDeleted, protocol.TeamTaskEventPayload{
 			TeamID:    teamID.String(),
 			TaskID:    taskID.String(),
 			Status:    task.Status,
@@ -319,7 +319,7 @@ func (m *TeamsMethods) handleTaskDeleteBulk(ctx context.Context, client *gateway
 	// Broadcast delete event per task for real-time UI sync.
 	if m.msgBus != nil {
 		for _, id := range deleted {
-			m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskDeleted, protocol.TeamTaskEventPayload{
+			m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskDeleted, protocol.TeamTaskEventPayload{
 				TeamID:    teamID.String(),
 				TaskID:    id.String(),
 				UserID:    client.UserID(),

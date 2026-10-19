@@ -134,7 +134,8 @@ func (m *TeamsMethods) handleDelete(ctx context.Context, client *gateway.Client,
 	// Emit team.deleted event
 	if m.msgBus != nil && team != nil {
 		m.msgBus.Broadcast(bus.Event{
-			Name: protocol.EventTeamDeleted,
+			Name:     protocol.EventTeamDeleted,
+			TenantID: store.TenantIDFromContext(ctx),
 			Payload: protocol.TeamDeletedPayload{
 				TeamID:   teamID.String(),
 				TeamName: team.Name,
@@ -322,7 +323,7 @@ func (m *TeamsMethods) handleUpdate(ctx context.Context, client *gateway.Client,
 		EscalationActions     []string `json:"escalation_actions,omitempty"`
 		WorkspaceScope        string   `json:"workspace_scope,omitempty"`
 		WorkspaceQuotaMB      *int     `json:"workspace_quota_mb,omitempty"`
-		Notifications *struct {
+		Notifications         *struct {
 			Dispatched *bool  `json:"dispatched,omitempty"`
 			Progress   *bool  `json:"progress,omitempty"`
 			Failed     *bool  `json:"failed,omitempty"`
@@ -403,7 +404,8 @@ func (m *TeamsMethods) handleUpdate(ctx context.Context, client *gateway.Client,
 			changes = append(changes, k)
 		}
 		m.msgBus.Broadcast(bus.Event{
-			Name: protocol.EventTeamUpdated,
+			Name:     protocol.EventTeamUpdated,
+			TenantID: store.TenantIDFromContext(ctx),
 			Payload: protocol.TeamUpdatedPayload{
 				TeamID:   teamID.String(),
 				TeamName: team.Name,

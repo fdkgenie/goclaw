@@ -203,8 +203,9 @@ func (m *AgentLinksMethods) handleCreate(ctx context.Context, client *gateway.Cl
 			payload.TeamID = link.TeamID.String()
 		}
 		m.msgBus.Broadcast(bus.Event{
-			Name:    protocol.EventAgentLinkCreated,
-			Payload: payload,
+			Name:     protocol.EventAgentLinkCreated,
+			TenantID: store.TenantIDFromContext(ctx),
+			Payload:  payload,
 		})
 	}
 }
@@ -295,7 +296,8 @@ func (m *AgentLinksMethods) handleUpdate(ctx context.Context, client *gateway.Cl
 				changes = append(changes, k)
 			}
 			m.msgBus.Broadcast(bus.Event{
-				Name: protocol.EventAgentLinkUpdated,
+				Name:     protocol.EventAgentLinkUpdated,
+				TenantID: store.TenantIDFromContext(ctx),
 				Payload: protocol.AgentLinkUpdatedPayload{
 					LinkID:         linkID.String(),
 					SourceAgentKey: updatedLink.SourceAgentKey,
@@ -359,7 +361,8 @@ func (m *AgentLinksMethods) handleDelete(ctx context.Context, client *gateway.Cl
 	// Emit agent_link.deleted event
 	if m.msgBus != nil && link != nil {
 		m.msgBus.Broadcast(bus.Event{
-			Name: protocol.EventAgentLinkDeleted,
+			Name:     protocol.EventAgentLinkDeleted,
+			TenantID: store.TenantIDFromContext(ctx),
 			Payload: protocol.AgentLinkDeletedPayload{
 				LinkID:         linkID.String(),
 				SourceAgentKey: link.SourceAgentKey,
