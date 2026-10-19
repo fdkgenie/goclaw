@@ -388,7 +388,12 @@ The `connect` response carries a `server.capabilities` array. Clients that depen
     "server": {
       "name": "goclaw",
       "version": "3.1.0",
-      "capabilities": ["events.cron_heartbeat_tenant_scoped"]
+      "capabilities": [
+        "events.cron_heartbeat_tenant_scoped",
+        "events.team_link_tenant_tagged",
+        "usage.events.team",
+        "teams.tasks.list.has_more"
+      ]
     }
   }
 }
@@ -397,5 +402,8 @@ The `connect` response carries a `server.capabilities` array. Clients that depen
 | Capability | Meaning |
 |------------|---------|
 | `events.cron_heartbeat_tenant_scoped` | `cron` and `heartbeat` events are tenant-scoped, and `heartbeat` events are restricted to admin/owner clients. |
+| `events.team_link_tenant_tagged` | `team.*`, `team.member.*`, `agent_link.*`, and `team.task.*` events carry the context tenant ID for server-side delivery filtering. |
+| `usage.events.team` | Usage event analytics support the team dimension for filtering and grouping. |
+| `teams.tasks.list.has_more` | `teams.tasks.list` returns a `hasMore` boolean when the result set exceeds the 200-row dashboard limit. |
 
-Constants live in `pkg/protocol/capabilities.go` (`protocol.CapEventsCronHeartbeatTenantScoped`). The array is built by `standardServerCapabilities()` in `internal/gateway/router.go` and is present in **both** connect responses (authenticated and `pending_pairing`).
+Constants live in `pkg/protocol/capabilities.go` (`protocol.CapEventsCronHeartbeatTenantScoped`, `protocol.CapEventsTeamLinkTenantTagged`, `protocol.CapUsageEventsTeam`, `protocol.CapTeamsTasksListHasMore`). The array is built by `standardServerCapabilities()` in `internal/gateway/router.go` and is present in **both** connect responses (authenticated and `pending_pairing`).
