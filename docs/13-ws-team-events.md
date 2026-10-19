@@ -264,6 +264,12 @@ Delegation-only fields: `delegationId`, `teamId`, `teamTaskId`, `parentAgentId` 
 
 > When `Stream: true`, `chunk`/`thinking` emit incrementally. When `Stream: false` (delegate runs), emit once with full content.
 
+### 4.9 Tenant Scoping and Task List Pagination
+
+`team.*`, `team.member.*`, `agent_link.*`, and `team.task.*` events carry the caller's tenant in `bus.Event.TenantID`. Delivery is isolated by tenant: clients never receive an event tagged for another tenant, and untagged events are delivered only to owner clients (fail-closed). The tenant ID is server-side metadata and is not serialized into the wire payload.
+
+`teams.tasks.list` returns `tasks` (at most 200 rows), `count` (the truncated length), and `hasMore` (boolean). `hasMore` is `true` when more than 200 tasks exist; clients can show a lower-bound indicator without fetching another page. The dashboard task limit is fixed at 200 for this RPC.
+
 ---
 
 ## 5. Correlation Rules
