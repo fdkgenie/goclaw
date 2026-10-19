@@ -3,8 +3,7 @@ COMMIT_SHA ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 LDFLAGS  = -s -w -X github.com/nextlevelbuilder/goclaw/cmd.Version=$(VERSION) -X github.com/nextlevelbuilder/goclaw/cmd.CommitSHA=$(COMMIT_SHA)
 BINARY   = goclaw
 
-.PHONY: build build-full build-tui run clean version up up-build down logs reset test vet check-web dev migrate setup ci desktop-dev desktop-build desktop-dmg test-hooks test-hooks-unit test-hooks-e2e test-hooks-chaos test-hooks-rbac test-hooks-tracing
-
+.PHONY: build build-full build-tui run clean version up up-build down logs reset test vet check-web dev migrate setup ci desktop-dev desktop-build desktop-dmg test-hooks test-hooks-unit test-hooks-e2e test-hooks-chaos test-hooks-rbac test-hooks-tracing dashboard-build dashboard-clean
 # Build backend only (API-only, no embedded web UI)
 build:
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(BINARY) .
@@ -165,3 +164,13 @@ desktop-dmg: desktop-build
 		-ov -format UDZO "goclaw-lite-$(VERSION)-darwin-$$(uname -m | sed 's/x86_64/amd64/').dmg"
 	rm -rf /tmp/goclaw-dmg-staging
 	@echo "DMG created: goclaw-lite-$(VERSION)-darwin-$$(uname -m | sed 's/x86_64/amd64/').dmg"
+# ── Dashboard service ──
+dashboard-build:
+	cd ui/dashboard && pnpm install --frozen-lockfile && pnpm build
+	rm -rf internal/dashboard/webui/dist && mkdir -p internal/dashboard/webui/dist
+	cp -r ui/dashboard/dist/* internal/dashboard/webui/dist/
+	CGO_ENABLED=0 go build -tags dashboardui -ldflags="$(LDFLAGS)" -o goclaw-dashboard ./cmd/dashboard
+
+dashboard-clean:
+	rm -rf internal/dashboard/webui/dist
+	rm -f goclaw-dashboard
