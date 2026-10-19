@@ -46,9 +46,9 @@ func connectResponse(t *testing.T, server *Server, client *Client, params map[st
 	}
 }
 
-// assertCapabilityAdvertised checks that the connect payload advertises the
-// cron/heartbeat tenant-scoping capability.
-func assertCapabilityAdvertised(t *testing.T, payload any) {
+// assertCapabilityAdvertised checks that the connect payload advertises every
+// requested capability.
+func assertCapabilityAdvertised(t *testing.T, payload any, want ...string) {
 	t.Helper()
 
 	body, ok := payload.(map[string]any)
@@ -63,12 +63,21 @@ func assertCapabilityAdvertised(t *testing.T, payload any) {
 	if !ok {
 		t.Fatalf("server.capabilities is %T, want array", serverMeta["capabilities"])
 	}
+	advertised := make(map[string]bool, len(caps))
 	for _, c := range caps {
-		if c == protocol.CapEventsCronHeartbeatTenantScoped {
-			return
+		if s, ok := c.(string); ok {
+			advertised[s] = true
 		}
 	}
-	t.Errorf("capability %q not advertised in %v", protocol.CapEventsCronHeartbeatTenantScoped, caps)
+	var missing []string
+	for _, capability := range want {
+		if !advertised[capability] {
+			missing = append(missing, capability)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("capabilities not advertised: %v (got %v)", missing, caps)
+	}
 }
 
 func TestConnectResponse_IncludesCapabilities(t *testing.T) {
@@ -86,7 +95,12 @@ func TestConnectResponse_IncludesCapabilities(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("connect failed: %+v", resp.Error)
 	}
-	assertCapabilityAdvertised(t, resp.Payload)
+	assertCapabilityAdvertised(t, resp.Payload,
+		protocol.CapEventsCronHeartbeatTenantScoped,
+		protocol.CapEventsTeamLinkTenantTagged,
+		protocol.CapUsageEventsTeam,
+		protocol.CapTeamsTasksListHasMore,
+	)
 }
 
 func TestConnectResponse_PendingPairingIncludesCapabilities(t *testing.T) {
@@ -110,5 +124,10 @@ func TestConnectResponse_PendingPairingIncludesCapabilities(t *testing.T) {
 	if body["status"] != "pending_pairing" {
 		t.Fatalf("status = %v, want pending_pairing", body["status"])
 	}
-	assertCapabilityAdvertised(t, resp.Payload)
+	assertCapabilityAdvertised(t, resp.Payload,
+		protocol.CapEventsCronHeartbeatTenantScoped,
+		protocol.CapEventsTeamLinkTenantTagged,
+		protocol.CapUsageEventsTeam,
+		protocol.CapTeamsTasksListHasMore,
+	)
 }
