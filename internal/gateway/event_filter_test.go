@@ -7,6 +7,7 @@ import (
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/permissions"
+	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
@@ -39,7 +40,6 @@ func TestIsSystemEvent_KnownNames(t *testing.T) {
 		protocol.EventShutdown,
 		protocol.EventConnectChallenge,
 		protocol.EventTalkMode,
-		protocol.EventHeartbeat,
 	}
 	for _, name := range systemEvents {
 		if !isSystemEvent(name) {
@@ -62,6 +62,7 @@ func TestIsAdminOnlyEvent_KnownAdminEvents(t *testing.T) {
 		protocol.EventDevicePairReq,
 		protocol.EventAgentLinkCreated,
 		protocol.EventWorkspaceFileChanged,
+		protocol.EventHeartbeat,
 	}
 	for _, name := range adminEvents {
 		if !isAdminOnlyEvent(name) {
@@ -316,5 +317,89 @@ func TestClientCanReceiveEvent_MCPOAuthComplete_NoInitiatingUserIDBlocked(t *tes
 
 	if clientCanReceiveEvent(c, evt) {
 		t.Error("mcp.oauth_complete without initiatingUserId should be blocked for non-admin (fail-closed)")
+	}
+}
+
+// ---- Cron & heartbeat tenant isolation ----
+
+func TestHeartbeat_IsNoLongerSystemEvent(t *testing.T) {
+	if isSystemEvent(protocol.EventHeartbeat) {
+		t.Error("EventHeartbeat must NOT be a system event — system events bypass tenant isolation")
+	}
+}
+
+func TestHeartbeat_TenantIsolationAndRoleGating(t *testing.T) {
+	tenantA := uuid.MustParse("00000000-0000-0000-0000-00000000000a")
+	tenantB := uuid.MustParse("00000000-0000-0000-0000-00000000000b")
+
+	adminA := makeClient(permissions.RoleAdmin, "admin-a", tenantA)
+	viewerA := makeClient(permissions.RoleViewer, "viewer-a", tenantA)
+	adminB := makeClient(permissions.RoleAdmin, "admin-b", tenantB)
+
+	hbEvt := makeEvent(protocol.EventHeartbeat, tenantA, store.HeartbeatEvent{
+		Action:   "running",
+		AgentID:  "agent-1",
+		TenantID: tenantA,
+	})
+
+	if !clientCanReceiveEvent(adminA, hbEvt) {
+		t.Error("admin of tenant A should receive the tenant A heartbeat event")
+	}
+	if clientCanReceiveEvent(adminB, hbEvt) {
+		t.Error("admin of tenant B must NOT receive the tenant A heartbeat event (tenant isolation)")
+	}
+	if clientCanReceiveEvent(viewerA, hbEvt) {
+		t.Error("viewer must NOT receive heartbeat events (admin-only policy)")
+	}
+}
+
+func TestCron_TenantIsolationAndUserScoping(t *testing.T) {
+	tenantA := uuid.MustParse("00000000-0000-0000-0000-00000000000a")
+	tenantB := uuid.MustParse("00000000-0000-0000-0000-00000000000b")
+
+	adminA := makeClient(permissions.RoleAdmin, "admin-a", tenantA)
+	ownerA := makeClient(permissions.RoleViewer, "user-1", tenantA)
+	otherA := makeClient(permissions.RoleViewer, "user-2", tenantA)
+	adminB := makeClient(permissions.RoleAdmin, "admin-b", tenantB)
+
+	cronEvt := makeEvent(protocol.EventCron, tenantA, store.CronEvent{
+		Action:   "running",
+		JobID:    "job-1",
+		UserID:   "user-1",
+		TenantID: tenantA,
+	})
+
+	if !clientCanReceiveEvent(adminA, cronEvt) {
+		t.Error("admin of tenant A should receive the tenant A cron event")
+	}
+	if !clientCanReceiveEvent(ownerA, cronEvt) {
+		t.Error("the job owner should receive their own cron event")
+	}
+	if clientCanReceiveEvent(otherA, cronEvt) {
+		t.Error("a different user of tenant A must NOT receive user-1's cron event")
+	}
+	if clientCanReceiveEvent(adminB, cronEvt) {
+		t.Error("admin of tenant B must NOT receive the tenant A cron event (tenant isolation)")
+	}
+}
+
+func TestCronAndHeartbeat_NilTenantOnlyOwner(t *testing.T) {
+	adminA := makeClient(permissions.RoleAdmin, "admin-a", masterTenant)
+	ownerA := makeClient(permissions.RoleOwner, "owner-a", masterTenant)
+
+	unscopedCron := makeEvent(protocol.EventCron, uuid.Nil, store.CronEvent{Action: "running"})
+	unscopedHeartbeat := makeEvent(protocol.EventHeartbeat, uuid.Nil, store.HeartbeatEvent{Action: "running"})
+
+	if clientCanReceiveEvent(adminA, unscopedCron) {
+		t.Error("non-owner admin must NOT receive an unscoped cron event")
+	}
+	if !clientCanReceiveEvent(ownerA, unscopedCron) {
+		t.Error("owner should receive an unscoped cron event")
+	}
+	if clientCanReceiveEvent(adminA, unscopedHeartbeat) {
+		t.Error("non-owner admin must NOT receive an unscoped heartbeat event")
+	}
+	if !clientCanReceiveEvent(ownerA, unscopedHeartbeat) {
+		t.Error("owner should receive an unscoped heartbeat event")
 	}
 }

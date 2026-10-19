@@ -1046,7 +1046,7 @@ func runGateway() {
 	defer sched.Stop()
 
 	// Start cron + heartbeat ticker, wire wake functions and adaptive throttle.
-	heartbeatTicker := startCronAndHeartbeat(pgStores, server, sched, msgBus, providerRegistry, channelMgr, cfg, heartbeatTool, heartbeatMethods)
+	heartbeatTicker := startCronAndHeartbeat(pgStores, sched, msgBus, providerRegistry, channelMgr, cfg, heartbeatTool, heartbeatMethods)
 
 	// Subscribe to agent events for channel streaming/reaction forwarding.
 	deps.wireChannelStreamingSubscriber()

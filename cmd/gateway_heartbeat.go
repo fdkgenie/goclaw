@@ -10,7 +10,6 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/channels"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
-	"github.com/nextlevelbuilder/goclaw/internal/gateway"
 	"github.com/nextlevelbuilder/goclaw/internal/gateway/methods"
 	"github.com/nextlevelbuilder/goclaw/internal/heartbeat"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
@@ -33,7 +32,6 @@ func makeHeartbeatRunFn(sched *scheduler.Scheduler) func(ctx context.Context, re
 // Returns the heartbeat ticker (needed by lifecycle for shutdown).
 func startCronAndHeartbeat(
 	pgStores *store.Stores,
-	server *gateway.Server,
 	sched *scheduler.Scheduler,
 	msgBus *bus.MessageBus,
 	providerRegistry *providers.Registry,
@@ -45,7 +43,12 @@ func startCronAndHeartbeat(
 	// Start cron service with job handler (routes through scheduler's cron lane)
 	pgStores.Cron.SetOnJob(makeCronJobHandler(sched, msgBus, cfg, channelMgr, pgStores.Sessions, pgStores.Agents, pgStores.Tenants, pgStores.Providers, providerRegistry))
 	pgStores.Cron.SetOnEvent(func(event store.CronEvent) {
-		server.BroadcastEvent(*protocol.NewEvent(protocol.EventCron, event))
+		// Route through the bus so the per-client filter (tenant + role) applies.
+		msgBus.Broadcast(bus.Event{
+			Name:     protocol.EventCron,
+			Payload:  event,
+			TenantID: event.TenantID,
+		})
 	})
 	if err := pgStores.Cron.Start(); err != nil {
 		slog.Warn("cron service failed to start", "error", err)
@@ -67,7 +70,12 @@ func startCronAndHeartbeat(
 		},
 	})
 	heartbeatTicker.SetOnEvent(func(event store.HeartbeatEvent) {
-		server.BroadcastEvent(*protocol.NewEvent(protocol.EventHeartbeat, event))
+		// Route through the bus so the per-client filter (tenant + role) applies.
+		msgBus.Broadcast(bus.Event{
+			Name:     protocol.EventHeartbeat,
+			Payload:  event,
+			TenantID: event.TenantID,
+		})
 	})
 	heartbeatTicker.Start()
 

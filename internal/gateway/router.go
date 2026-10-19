@@ -139,6 +139,16 @@ func provisionScopeAllowed(c *Client, method string) bool {
 
 // --- Built-in handlers ---
 
+// standardServerCapabilities lists the gateway capabilities advertised to
+// clients in the connect response (server.capabilities). External clients
+// probe this list to verify runtime prerequisites before operating — a
+// missing capability means the server is too old for the client.
+func standardServerCapabilities() []string {
+	return []string{
+		protocol.CapEventsCronHeartbeatTenantScoped,
+	}
+}
+
 func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *protocol.RequestFrame) {
 	// Parse connect params
 	var params struct {
@@ -334,8 +344,9 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 				"pairing_code": code,
 				"sender_id":    client.id,
 				"server": map[string]any{
-					"name":    "goclaw",
-					"version": r.server.version,
+					"name":         "goclaw",
+					"version":      r.server.version,
+					"capabilities": standardServerCapabilities(),
 				},
 			}))
 			return
@@ -396,8 +407,9 @@ func (r *MethodRouter) sendConnectResponse(ctx context.Context, client *Client, 
 		"is_master_scope": store.IsMasterScope(scopedCtx),
 		"edition":         edition.Current().Name,
 		"server": map[string]any{
-			"name":    "goclaw",
-			"version": r.server.version,
+			"name":         "goclaw",
+			"version":      r.server.version,
+			"capabilities": standardServerCapabilities(),
 		},
 	}
 

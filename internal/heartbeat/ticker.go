@@ -207,6 +207,7 @@ func (t *Ticker) runOne(ctx context.Context, hb store.AgentHeartbeat) {
 	// [4] Emit running event.
 	t.emitEvent(store.HeartbeatEvent{
 		Action: "running", AgentID: agentIDStr, AgentKey: agentKey,
+		TenantID: store.TenantIDFromContext(ctx),
 	})
 
 	// [4] Build prompt.
@@ -407,6 +408,7 @@ func (t *Ticker) finishRun(ctx context.Context, hb store.AgentHeartbeat, session
 		Action:   status,
 		AgentID:  agentIDStr,
 		AgentKey: agentKey,
+		TenantID: store.TenantIDFromContext(ctx),
 		Status:   status,
 		Error:    errMsg,
 	})
@@ -429,6 +431,7 @@ func (t *Ticker) logSkipped(ctx context.Context, hb store.AgentHeartbeat, reason
 		Action:   "skipped",
 		AgentID:  hb.AgentID.String(),
 		AgentKey: agentKey,
+		TenantID: store.TenantIDFromContext(ctx),
 		Reason:   reason,
 	})
 }

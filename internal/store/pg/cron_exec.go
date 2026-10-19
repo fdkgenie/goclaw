@@ -44,7 +44,7 @@ func (s *PGCronStore) RunJob(ctx context.Context, jobID string, force bool) (boo
 	s.cacheLoaded = false
 	s.mu.Unlock()
 
-	s.emitEvent(store.CronEvent{Action: "running", JobID: job.ID, JobName: job.Name, UserID: job.UserID})
+	s.emitEvent(store.CronEvent{Action: "running", JobID: job.ID, JobName: job.Name, UserID: job.UserID, TenantID: job.TenantID})
 
 	// Run directly without reload — job already loaded and claimed above.
 	// reloadClaimed=false skips loadClaimedJob (which requires enabled=true),

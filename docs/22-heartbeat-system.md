@@ -297,7 +297,9 @@ Central React hook managing all heartbeat UI state. Located at `ui/web/src/pages
 
 ## 11. Event Broadcasting
 
-Heartbeat lifecycle events are broadcast to all connected WebSocket clients.
+Heartbeat lifecycle events are published on the message bus and delivered to WebSocket clients **of the agent's tenant only**. Delivery is further restricted to clients with the `admin`/`owner` role — a `viewer` or `operator` client never receives heartbeat events.
+
+The tenant is **not** part of the wire payload: `store.HeartbeatEvent` carries it in a `json:"-"` field, so isolation is enforced entirely server-side by the gateway filter (`clientCanReceiveEvent` in `internal/gateway/event_filter.go`). An event without a tenant is delivered only to `owner`-role clients (fail-closed).
 
 ```json
 {
@@ -313,6 +315,8 @@ Heartbeat lifecycle events are broadcast to all connected WebSocket clients.
   }
 }
 ```
+
+The gateway advertises this behaviour in the `connect` response as the `events.cron_heartbeat_tenant_scoped` capability (`server.capabilities`) — see [13-ws-team-events.md](./13-ws-team-events.md#8-server-capabilities-connect-response).
 
 ### Event Actions
 

@@ -31,11 +31,14 @@ Establish an authenticated session. Must be the first request after WebSocket up
   "role": "admin",
   "user_id": "user-123",
   "server": {
+    "name": "goclaw",
     "version": "1.0.0",
-    "uptime": "2h30m"
+    "capabilities": ["events.cron_heartbeat_tenant_scoped"]
   }
 }
 ```
+
+`server.capabilities` lists the server features a client may depend on. Clients that require a specific capability (e.g. tenant-scoped `cron`/`heartbeat` events) must refuse to operate when it is absent. See [13 — WS Team & Delegation Events](13-ws-team-events.md#8-server-capabilities-connect-response).
 
 **Auth flow:** Gateway token → timing-safe compare → admin role. If no match, SHA-256 hash → API key lookup → role derived from scopes. Pairing codes also accepted for channel devices.
 

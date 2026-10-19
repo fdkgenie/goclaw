@@ -40,7 +40,7 @@ func (s *SQLiteCronStore) RunJob(ctx context.Context, jobID string, force bool) 
 	}
 	s.InvalidateCache()
 
-	s.emitEvent(store.CronEvent{Action: "running", JobID: job.ID, JobName: job.Name, UserID: job.UserID})
+	s.emitEvent(store.CronEvent{Action: "running", JobID: job.ID, JobName: job.Name, UserID: job.UserID, TenantID: job.TenantID})
 	s.executeOneJob(*job, handler, false)
 
 	s.mu.Lock()

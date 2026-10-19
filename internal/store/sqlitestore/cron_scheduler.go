@@ -334,7 +334,7 @@ func (s *SQLiteCronStore) executeOneJob(job store.CronJob, handler func(job *sto
 		}
 	}
 
-	evt := store.CronEvent{Action: "completed", JobID: job.ID, JobName: job.Name, UserID: job.UserID, Status: status}
+	evt := store.CronEvent{Action: "completed", JobID: job.ID, JobName: job.Name, UserID: job.UserID, TenantID: job.TenantID, Status: status}
 	if err != nil {
 		evt.Action = "error"
 		evt.Error = err.Error()
