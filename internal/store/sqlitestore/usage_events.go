@@ -24,7 +24,11 @@ func NewSQLiteUsageEventStore(db *sql.DB) *SQLiteUsageEventStore {
 
 const sqliteUsageEventFieldCount = 31
 const sqliteUsageEventBatchSize = 30
-const sqliteUsageRollupFieldCount = 24
+const sqliteUsageRollupFieldCount = 25
+
+type contextExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
 
 func (s *SQLiteUsageEventStore) InsertEvent(ctx context.Context, event *store.UsageEvent) error {
 	if event == nil {
@@ -84,7 +88,14 @@ func (s *SQLiteUsageEventStore) insertBatch(ctx context.Context, events []store.
 func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, bucketHour time.Time) error {
 	start := bucketHour.UTC().Truncate(time.Hour)
 	end := start.Add(time.Hour)
-	rows, err := s.db.QueryContext(ctx, `SELECT
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin rollup tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `SELECT
 		tenant_id,
 		bucket_hour,
 		event_type,
@@ -92,6 +103,7 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		resource_name,
 		source,
 		agent_id,
+		team_id,
 		channel,
 		provider,
 		model,
@@ -110,7 +122,7 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		COALESCE(SUM(error_count), 0)
 	FROM usage_events
 	WHERE event_time >= ? AND event_time < ?
-	GROUP BY tenant_id, bucket_hour, event_type, resource_type, resource_name, source, agent_id, channel, provider, model, status`,
+	GROUP BY tenant_id, bucket_hour, event_type, resource_type, resource_name, source, agent_id, team_id, channel, provider, model, status`,
 		start, end)
 	if err != nil {
 		return fmt.Errorf("aggregate usage event rollup: %w", err)
@@ -124,7 +136,7 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		var bucketTime sqliteTime
 		if err := rows.Scan(
 			&rollup.TenantID, &bucketTime, &rollup.EventType, &rollup.ResourceType,
-			&rollup.ResourceName, &rollup.Source, &rollup.AgentID, &rollup.Channel,
+			&rollup.ResourceName, &rollup.Source, &rollup.AgentID, &rollup.TeamID, &rollup.Channel,
 			&rollup.Provider, &rollup.Model, &rollup.Status,
 			&rollup.InputTokens, &rollup.OutputTokens, &rollup.TotalTokens,
 			&rollup.CacheReadTokens, &rollup.CacheCreateTokens, &rollup.ThinkingTokens, &rollup.CostUSD,
@@ -135,10 +147,30 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		rollup.BucketHour = bucketTime.Time
 		rollups = append(rollups, rollup)
 	}
+	// Close the read cursor before issuing writes on the same tx/connection.
+	if err := rows.Close(); err != nil {
+		return err
+	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return s.upsertEventRollups(ctx, rollups)
+
+	// Normalized DELETE: match both driver t.String() and RFC3339 format
+	bucketPrefix := start.Format("2006-01-02 15:04:05")
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM usage_event_rollups WHERE substr(replace(bucket_hour, 'T', ' '), 1, 19) = ?`,
+		bucketPrefix,
+	); err != nil {
+		return fmt.Errorf("delete old bucket rollups: %w", err)
+	}
+
+	if len(rollups) > 0 {
+		if err := s.upsertEventRollups(ctx, tx, rollups); err != nil {
+			return fmt.Errorf("insert new rollups: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *SQLiteUsageEventStore) GetLatestEventRollupBucket(ctx context.Context) (*time.Time, error) {
@@ -153,7 +185,7 @@ func (s *SQLiteUsageEventStore) GetLatestEventRollupBucket(ctx context.Context) 
 	return &nt.Time, nil
 }
 
-func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups []store.UsageEventRollup) error {
+func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, q contextExecer, rollups []store.UsageEventRollup) error {
 	if len(rollups) == 0 {
 		return nil
 	}
@@ -164,7 +196,7 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 		vals[i] = placeholderRow
 		args = append(args,
 			rollup.ID, rollup.TenantID, rollup.BucketHour, rollup.EventType, rollup.ResourceType,
-			rollup.ResourceName, rollup.Source, nilUUID(rollup.AgentID), rollup.Channel,
+			rollup.ResourceName, rollup.Source, nilUUID(rollup.AgentID), nilUUID(rollup.TeamID), rollup.Channel,
 			rollup.Provider, rollup.Model, rollup.Status, rollup.InputTokens, rollup.OutputTokens,
 			rollup.TotalTokens, rollup.CacheReadTokens, rollup.CacheCreateTokens, rollup.ThinkingTokens,
 			rollup.CostUSD, rollup.DurationMS, rollup.CallCount,
@@ -173,7 +205,7 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 	}
 	query := `INSERT INTO usage_event_rollups (
 		id, tenant_id, bucket_hour, event_type, resource_type, resource_name, source,
-		agent_id, channel, provider, model, status,
+		agent_id, team_id, channel, provider, model, status,
 		input_tokens, output_tokens, total_tokens,
 		cache_read_tokens, cache_create_tokens, thinking_tokens, cost_usd,
 		duration_ms, call_count, error_count, created_at, updated_at
@@ -186,6 +218,7 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 		resource_name,
 		source,
 		COALESCE(agent_id, '00000000-0000-0000-0000-000000000000'),
+		COALESCE(team_id, '00000000-0000-0000-0000-000000000000'),
 		channel,
 		provider,
 		model,
@@ -202,7 +235,7 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 		call_count = excluded.call_count,
 		error_count = excluded.error_count,
 		updated_at = excluded.updated_at`
-	_, err := s.db.ExecContext(ctx, query, args...)
+	_, err := q.ExecContext(ctx, query, args...)
 	return err
 }
 
@@ -392,6 +425,9 @@ func buildSQLiteUsageEventWhere(ctx context.Context, q store.UsageEventQuery, ti
 	if q.AgentID != nil {
 		add("agent_id", *q.AgentID)
 	}
+	if q.TeamID != nil {
+		add("team_id", *q.TeamID)
+	}
 	if q.Channel != "" {
 		add("channel", q.Channel)
 	}
@@ -434,6 +470,8 @@ func sqliteUsageEventGroupColumn(groupBy string) string {
 		return "status"
 	case "agent":
 		return "COALESCE(agent_id, '')"
+	case "team":
+		return "COALESCE(team_id, '')"
 	case "channel":
 		return "channel"
 	case "provider":
