@@ -76,6 +76,12 @@ jobs:
       # completes in <3s against a warm DB.
       - name: Integration tests
         run: go test -race -timeout=180s -tags integration ./tests/integration/
+      # Store-level integration tests are excluded from the plain `go test ./...`
+      # unit run by their `integration` build tag, so they need an explicit step
+      # to be executed at all. Scoped with -run to the B1 cron tenant test:
+      # the rest of the package's integration-tagged tests are not part of B1.
+      - name: Store integration tests (PG cron tenant scoping)
+        run: go test -race -timeout=180s -tags integration -run TestPGCronStore_EmitPopulatesTenantID ./internal/store/pg/
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
