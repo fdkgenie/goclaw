@@ -177,24 +177,28 @@ func (m *TeamsMethods) handleTaskList(ctx context.Context, client *gateway.Clien
 		return
 	}
 
-	const dashboardLimit = 200
-	tasks, err := m.teamStore.ListTasks(ctx, teamID, "newest", params.Status, "", params.Channel, params.ChatID, dashboardLimit, 0)
+	tasks, err := m.teamStore.ListTasks(ctx, teamID, "newest", params.Status, "", params.Channel, params.ChatID, dashboardTaskLimit, 0)
 	if err != nil {
 		slog.Warn("teams.tasks.list failed", "team_id", teamID, "status_filter", params.Status, "error", err)
 		client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, err.Error()))
 		return
 	}
 
-	// ListTasks returns limit+1 rows for hasMore detection; truncate for dashboard response.
-	hasMore := len(tasks) > dashboardLimit
-	if hasMore {
-		tasks = tasks[:dashboardLimit]
-	}
+	client.SendResponse(protocol.NewOKResponse(req.ID, buildTaskListResponse(tasks)))
+}
 
-	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{
-		"tasks": tasks,
-		"count": len(tasks),
-	}))
+const dashboardTaskLimit = 200
+
+func buildTaskListResponse(tasks []store.TeamTaskData) map[string]any {
+	hasMore := len(tasks) > dashboardTaskLimit
+	if hasMore {
+		tasks = tasks[:dashboardTaskLimit]
+	}
+	return map[string]any{
+		"tasks":   tasks,
+		"count":   len(tasks),
+		"hasMore": hasMore,
+	}
 }
 
 // --- Active Tasks by Session ---

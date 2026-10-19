@@ -55,10 +55,10 @@ export const teamService = {
     return getWsClient().call('teams.members.remove', { teamId, agentId })
   },
 
-  listTasks(teamId: string, statusFilter?: string): Promise<{ tasks: TeamTaskData[] | null; members?: TeamMemberData[] | null }> {
+  listTasks(teamId: string, statusFilter?: string): Promise<{ tasks: TeamTaskData[] | null; members?: TeamMemberData[] | null; hasMore?: boolean }> {
     const params: Record<string, unknown> = { teamId }
     if (statusFilter) params.status = statusFilter
-    return getWsClient().call('teams.tasks.list', params) as Promise<{ tasks: TeamTaskData[] | null; members?: TeamMemberData[] | null }>
+    return getWsClient().call('teams.tasks.list', params) as Promise<{ tasks: TeamTaskData[] | null; members?: TeamMemberData[] | null; hasMore?: boolean }>
   },
 
   getTask(teamId: string, taskId: string): Promise<{ task: TeamTaskData; attachments?: TeamTaskAttachment[] }> {
