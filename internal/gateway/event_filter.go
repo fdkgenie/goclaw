@@ -156,7 +156,7 @@ func isSystemEvent(name string) bool {
 	switch name {
 	case protocol.EventHealth, protocol.EventPresence, protocol.EventVoicewakeChanged,
 		protocol.EventTick, protocol.EventShutdown, protocol.EventConnectChallenge,
-		protocol.EventTalkMode, protocol.EventHeartbeat:
+		protocol.EventTalkMode:
 		return true
 	}
 	return false
@@ -169,7 +169,8 @@ func isAdminOnlyEvent(name string) bool {
 		protocol.EventDevicePairReq, protocol.EventDevicePairRes,
 		protocol.EventAgentLinkCreated, protocol.EventAgentLinkUpdated, protocol.EventAgentLinkDeleted,
 		protocol.EventWorkspaceFileChanged,
-		protocol.EventBackgroundError:
+		protocol.EventBackgroundError,
+		protocol.EventHeartbeat:
 		return true
 	}
 	return false

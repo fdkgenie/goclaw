@@ -192,6 +192,9 @@ type CronEvent struct {
 	UserID  string `json:"userId,omitempty" db:"-"` // job owner for event filtering
 	Status  string `json:"status,omitempty" db:"-"` // final status for completed/error
 	Error   string `json:"error,omitempty" db:"-"`
+	// TenantID scopes the event to the owning tenant. Never serialized: the
+	// wire payload is unchanged and the tenant is enforced server-side.
+	TenantID uuid.UUID `json:"-" db:"-"`
 }
 
 // CronStore manages scheduled jobs.

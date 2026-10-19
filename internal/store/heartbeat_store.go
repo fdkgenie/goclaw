@@ -94,6 +94,9 @@ type HeartbeatEvent struct {
 	Status   string `json:"status,omitempty" db:"-"`
 	Error    string `json:"error,omitempty" db:"-"`
 	Reason   string `json:"reason,omitempty" db:"-"` // skip reason
+	// TenantID scopes the event to the owning tenant. Never serialized: the
+	// wire payload is unchanged and the tenant is enforced server-side.
+	TenantID uuid.UUID `json:"-" db:"-"`
 }
 
 // DeliveryTarget represents a known channel+chatID pair from session history.

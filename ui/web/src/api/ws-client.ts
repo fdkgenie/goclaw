@@ -215,7 +215,7 @@ export class WsClient {
         is_owner?: boolean;
         is_master_scope?: boolean;
         edition?: "standard" | "lite";
-        server?: { name?: string; version?: string };
+        server?: { name?: string; version?: string; capabilities?: string[] };
       }>("connect", {
         token: this.getToken(),
         user_id: this.getUserId(),

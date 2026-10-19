@@ -90,6 +90,21 @@ All notable changes to GoClaw are documented here. For full documentation, see [
 
 ### Fixed
 
+- **Cross-tenant leak of `cron` and `heartbeat` WebSocket events** — both events
+  were published with `server.BroadcastEvent`, which bypasses the per-client
+  filter, and `heartbeat` was additionally classified as a system event, so
+  every connected client of every tenant received them. `cron` and `heartbeat`
+  are now published on the message bus with the owning tenant, so delivery goes
+  through the normal tenant/role filter: `cron` events reach only the owning
+  tenant (and, for non-admin clients, only the job owner), `heartbeat` events
+  reach only admin/owner clients of the owning tenant. The tenant is not part
+  of the wire payload — isolation stays server-side. The `connect` response now
+  advertises the capability `events.cron_heartbeat_tenant_scoped` under
+  `server.capabilities`.
+  **Behavior change:** clients with the `operator` or `viewer` role no longer
+  receive `heartbeat` events (e.g. `goclaw-cli heartbeat logs --follow` with a
+  non-admin key).
+
 - **Quick Acknowledgement generated mode** — Generated acknowledgements now use
   the sidecar delivery generator instead of always falling back to fixed
   templates. Sidecar failures stay non-blocking and fall back to templates.

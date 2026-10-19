@@ -6,7 +6,7 @@ Complete reference for all WS events related to team operations, delegation life
 
 ## 1. Overview
 
-Events are emitted via `msgBus.Broadcast(bus.Event{})` and forwarded to all connected WS clients by the gateway subscriber. The domain event bus (`internal/eventbus`) is internal-only and does **not** forward to WS clients.
+Events are emitted via `msgBus.Broadcast(bus.Event{})` and forwarded to WS clients by the gateway subscriber. Every bus event carries a `tenant_id`; the gateway subscriber applies a per-client filter (`clientCanReceiveEvent` in `internal/gateway/event_filter.go`) so a client only receives events for its own tenant, and role-scoped events (`admin`-only) are not delivered to non-admin clients. The domain event bus (`internal/eventbus`) is internal-only and does **not** forward to WS clients.
 
 Wire frame:
 ```json
@@ -344,3 +344,52 @@ All event name constants are defined in `pkg/protocol/events.go`:
 | `EventTeamMessageSent` | `team.message.sent` |
 
 **Payload structs** in `pkg/protocol/team_events.go`: `DelegationEventPayload`, `DelegationProgressPayload`, `DelegationAccumulatedPayload`, `DelegationAnnouncePayload`, `TeamTaskEventPayload`, `TeamMessageEventPayload`, `TeamCreatedPayload`, `TeamUpdatedPayload`, `TeamDeletedPayload`, `TeamMemberAddedPayload`, `TeamMemberRemovedPayload`, `AgentLinkCreatedPayload`, `AgentLinkUpdatedPayload`, `AgentLinkDeletedPayload`.
+
+---
+
+## 7. Delivery Scope — cron & heartbeat
+
+`cron` and `heartbeat` are the two lifecycle event families that are **tenant-scoped server-side**. They are emitted on the bus with the owning tenant (`bus.Event.TenantID`), and the gateway filter decides per client:
+
+| Event | Tenant scope | Role scope | Notes |
+|-------|--------------|------------|-------|
+| `cron` | Owning tenant of the job | Admin/owner see all cron events of their tenant; other clients only see cron events whose payload `userId` matches their own user | Payload: `action`, `jobId`, `jobName?`, `userId?`, `status?`, `error?` |
+| `heartbeat` | Owning tenant of the agent | **Admin/owner only** | Payload: `action`, `agentId`, `agentKey?`, `status?`, `error?`, `reason?` |
+
+The tenant is **not** part of the wire payload — `store.CronEvent` / `store.HeartbeatEvent` carry it in a `json:"-"` field. Isolation is therefore enforced by the server only; clients cannot (and must not) re-filter by tenant themselves.
+
+Rules enforced by `clientCanReceiveEvent`:
+
+- An event whose tenant differs from the client's tenant is never delivered.
+- An event without a tenant (`uuid.Nil`) is delivered only to `owner`-role clients (fail-closed).
+- `heartbeat` is not a system event: it no longer bypasses the tenant check, and non-admin clients (`operator`, `viewer`) never receive it.
+
+Regression coverage: `internal/gateway/event_filter_test.go` (unit) and `tests/invariants/event_isolation_test.go` (P0 invariant, real WebSocket, two tenants).
+
+---
+
+## 8. Server Capabilities (connect response)
+
+The `connect` response carries a `server.capabilities` array. Clients that depend on a specific server behaviour probe this list and refuse to operate when a required capability is missing.
+
+```json
+{
+  "type": "res",
+  "id": "req-1",
+  "ok": true,
+  "payload": {
+    "protocol": 3,
+    "server": {
+      "name": "goclaw",
+      "version": "3.1.0",
+      "capabilities": ["events.cron_heartbeat_tenant_scoped"]
+    }
+  }
+}
+```
+
+| Capability | Meaning |
+|------------|---------|
+| `events.cron_heartbeat_tenant_scoped` | `cron` and `heartbeat` events are tenant-scoped, and `heartbeat` events are restricted to admin/owner clients. |
+
+Constants live in `pkg/protocol/capabilities.go` (`protocol.CapEventsCronHeartbeatTenantScoped`). The array is built by `standardServerCapabilities()` in `internal/gateway/router.go` and is present in **both** connect responses (authenticated and `pending_pairing`).
