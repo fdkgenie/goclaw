@@ -1770,6 +1770,8 @@ func idempotentColumnMigration(version int) (string, string, bool) {
 		return "webhook_calls", "last_heartbeat_at", true
 	case 55:
 		return "mcp_servers", "require_user_credentials", true
+	case 60:
+		return "usage_event_rollups", "team_id", true
 	default:
 		return "", "", false
 	}
