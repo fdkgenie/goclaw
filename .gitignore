@@ -9,6 +9,8 @@ backup/
 /openclaw-go
 /pkg-helper
 /goclaw.exe
+/goclaw-dashboard
+/dashboard
 /goclaw-local.exe
 
 # Ad-hoc debug probes live here — never commit (they import internal/
@@ -33,6 +35,7 @@ app
 browser-poc
 openclaw-go
 goclaw
+!internal/dashboard/goclaw/
 /config.json
 prompt.md
 *.bk.*
@@ -42,7 +45,12 @@ ui/web/node_modules/
 ui/web/dist/
 ui/web/.vite/
 *.tsbuildinfo
+/internal/dashboard/webui/dist/*
+!/internal/dashboard/webui/dist/.gitkeep
 ui/web/vite.config.ts
+ui/dashboard/node_modules/
+ui/dashboard/dist/
+ui/dashboard/.vite/
 
 # UI Desktop (Wails + React)
 ui/desktop/frontend/node_modules/
