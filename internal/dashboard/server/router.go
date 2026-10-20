@@ -64,6 +64,8 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // apiHandler dispatches authenticated API endpoints.
 func (r *Router) apiHandler(w http.ResponseWriter, req *http.Request) {
 	switch req.URL.Path {
+	case "/api/session":
+		r.writeJSON(w, map[string]bool{"authenticated": true})
 	case "/api/overview":
 		r.handleOverview(w, req)
 	case "/api/orgchart":
@@ -104,7 +106,7 @@ func (r *Router) loginHandler(w http.ResponseWriter, req *http.Request) {
 
 	token := r.sm.Create()
 	setSessionCookie(w, token, isSecure(req))
-	r.writeJSON(w, map[string]string{"status": "ok"})
+	r.writeJSON(w, map[string]bool{"authenticated": true})
 }
 
 func (r *Router) logoutHandler(w http.ResponseWriter, req *http.Request) {
@@ -113,7 +115,7 @@ func (r *Router) logoutHandler(w http.ResponseWriter, req *http.Request) {
 		r.sm.Delete(cookie.Value)
 	}
 	clearSessionCookie(w)
-	r.writeJSON(w, map[string]string{"status": "ok"})
+	r.writeJSON(w, map[string]bool{"authenticated": false})
 }
 
 func (r *Router) handleOverview(w http.ResponseWriter, req *http.Request) {

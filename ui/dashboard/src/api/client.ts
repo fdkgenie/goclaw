@@ -10,9 +10,13 @@ export async function apiRequest(
   if (!headers["Content-Type"] && init?.body) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(String(input), { ...init, headers });
-  if (res.status === 401) {
-    window.location.href = "/login";
+  const res = await fetch(String(input), {
+    credentials: "same-origin",
+    ...init,
+    headers,
+  });
+  if (res.status === 401 && !String(input).startsWith("/api/session")) {
+    window.dispatchEvent(new Event("dashboard:unauthorized"));
   }
   return res;
 }

@@ -159,6 +159,37 @@ func TestLoginCorrectPassword(t *testing.T) {
 	if cookie[0].HttpOnly != true {
 		t.Error("expected HttpOnly cookie")
 	}
+	if strings.Contains(w.Body.String(), cookie[0].Value) {
+		t.Fatal("login response body leaked the session token")
+	}
+	if !strings.Contains(w.Body.String(), `"authenticated":true`) {
+		t.Fatalf("login body = %q, want authenticated state", w.Body.String())
+	}
+}
+
+func TestSessionEndpointWithCookie(t *testing.T) {
+	router, _, sm := testRouterWithHub(t)
+	tok := sm.Create()
+	req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: tok})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("session status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"authenticated":true`) {
+		t.Fatalf("session body = %q", w.Body.String())
+	}
+}
+
+func TestSessionEndpointWithoutCookie(t *testing.T) {
+	router, _, _ := testRouterWithHub(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("session status = %d, want 401", w.Code)
+	}
 }
 
 func TestLoginWrongPassword(t *testing.T) {
