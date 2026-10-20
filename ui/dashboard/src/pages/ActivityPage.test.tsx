@@ -66,4 +66,56 @@ describe("ActivityPage", () => {
     expect(container.querySelector('[data-testid="activity-gap"]')).not.toBeNull();
     expect(container.textContent).toContain("Reconnection gap");
   });
+
+  it("renders a feed row with the event type, actor and time", async () => {
+    await act(async () => {
+      root.render(<ActivityPage />);
+    });
+
+    const row = container.querySelector('[data-testid="activity-item"]');
+    expect(row).not.toBeNull();
+    expect(row?.textContent).toContain("agent_event");
+    expect(row?.textContent).toContain("agent-1");
+    expect(row?.textContent).toContain("run.started");
+  });
+
+  it("renders a header cell for every feed column", async () => {
+    await act(async () => {
+      root.render(<ActivityPage />);
+    });
+
+    const heads = Array.from(container.querySelectorAll("thead th")).map(
+      (h) => h.textContent?.trim(),
+    );
+    expect(heads).toEqual(["Type", "Actor", "Event", "Time"]);
+  });
+
+  it("renders the empty state when no events are reported", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    await act(async () => {
+      root.render(<ActivityPage />);
+    });
+
+    expect(container.textContent).toContain("No activity yet.");
+    expect(container.querySelector('[data-slot="empty-state"]')).not.toBeNull();
+  });
+
+  it("offers a limit control bound to the limit query parameter", async () => {
+    await act(async () => {
+      root.render(<ActivityPage />);
+    });
+
+    const input = container.querySelector<HTMLInputElement>("#activity-limit");
+    expect(input).not.toBeNull();
+    const label = container.querySelector("label[for='activity-limit']");
+    expect(label?.textContent).toBe("Limit");
+  });
 });

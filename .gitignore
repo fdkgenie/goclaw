@@ -125,3 +125,6 @@ ui/web/nginx.staging.conf
 **/debug-*.log
 /*.sql
 scripts/docker-patch-*.sql
+
+# Local screenshot scratch dir (never commit)
+.tmp-shots/

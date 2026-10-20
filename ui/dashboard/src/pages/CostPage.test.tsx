@@ -119,4 +119,63 @@ describe("CostPage", () => {
     expect(container.textContent).toContain("Platform");
     expect(container.textContent).not.toContain("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
   });
+
+  it("renders a header cell for every cost column", async () => {
+    mockCost({
+      summary_usd: 70,
+      calls: 7,
+      rows: [{ key: "team-a", label: "Team A", cost_usd: 70, calls: 7, total_tokens: 700 }],
+    });
+    await render();
+
+    const heads = Array.from(container.querySelectorAll("thead th")).map(
+      (h) => h.textContent?.trim(),
+    );
+    expect(heads).toEqual(["Group", "Calls", "Tokens", "Cost (USD)"]);
+  });
+
+  it("renders one breakdown row per team", async () => {
+    mockCost({
+      summary_usd: 120,
+      calls: 11,
+      rows: [
+        { key: "team-a", label: "Team A", cost_usd: 70, calls: 7, total_tokens: 700 },
+        { key: "team-b", label: "Team B", cost_usd: 50, calls: 4, total_tokens: 400 },
+      ],
+    });
+    await render();
+
+    const bodyRows = container.querySelectorAll("tbody tr");
+    expect(bodyRows).toHaveLength(2);
+    expect(bodyRows[0].textContent).toContain("Team A");
+    expect(bodyRows[1].textContent).toContain("Team B");
+  });
+
+  it("renders the summary strip with total cost, calls and tokens", async () => {
+    mockCost({
+      summary_usd: 120,
+      calls: 11,
+      rows: [
+        { key: "team-a", label: "Team A", cost_usd: 70, calls: 7, total_tokens: 700 },
+        { key: "team-b", label: "Team B", cost_usd: 50, calls: 4, total_tokens: 400 },
+      ],
+    });
+    await render();
+
+    const tiles = container.querySelectorAll('[data-slot="stat-tile"]');
+    expect(tiles).toHaveLength(3);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Total cost");
+    expect(text).toContain("Tokens");
+  });
+
+  it("offers a team filter control bound to the team_id query parameter", async () => {
+    mockCost({ summary_usd: 0, calls: 0, rows: [] });
+    await render();
+
+    const input = container.querySelector<HTMLInputElement>("#cost-team-filter");
+    expect(input).not.toBeNull();
+    const label = container.querySelector("label[for='cost-team-filter']");
+    expect(label?.textContent).toBe("Team id");
+  });
 });

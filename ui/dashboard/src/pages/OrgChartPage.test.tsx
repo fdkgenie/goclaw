@@ -86,4 +86,57 @@ describe("OrgChartPage", () => {
     expect(helper?.getAttribute("data-node-type")).toBe("agent");
     expect(container.textContent).toContain("Helper Bot");
   });
+
+  it("renders a card element for every agent and team in the DAG", async () => {
+    await act(async () => {
+      root.render(<OrgChartPage />);
+    });
+
+    const nodes = container.querySelectorAll("[data-node-id]");
+    expect(nodes).toHaveLength(4);
+    for (const node of Array.from(nodes)) {
+      expect(node.tagName).toBe("DIV");
+    }
+    expect(container.textContent).toContain("Alpha Team");
+    expect(container.textContent).toContain("Lead Bot");
+    expect(container.textContent).toContain("Member Bot");
+    expect(container.textContent).toContain("Helper Bot");
+  });
+
+  it("renders a legend for hierarchy and delegation edges", async () => {
+    await act(async () => {
+      root.render(<OrgChartPage />);
+    });
+
+    expect(container.textContent).toContain("Hierarchy");
+    expect(container.textContent).toContain("Delegation");
+  });
+
+  it("renders the graph inside a horizontal scroll container", async () => {
+    await act(async () => {
+      root.render(<OrgChartPage />);
+    });
+
+    const scroller = container.querySelector(".overflow-x-auto");
+    expect(scroller).not.toBeNull();
+    const graph = container.querySelector('[data-slot="orgchart-graph"]');
+    expect(graph?.className).toContain("min-w-[600px]");
+  });
+
+  it("shows the empty state when the DAG has no nodes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ nodes: [], edges: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    await act(async () => {
+      root.render(<OrgChartPage />);
+    });
+
+    expect(container.textContent).toContain("No teams found.");
+  });
 });
