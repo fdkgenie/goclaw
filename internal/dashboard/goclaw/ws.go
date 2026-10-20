@@ -40,6 +40,11 @@ type Client struct {
 	conn      *websocket.Conn
 	connected bool
 
+	// writeMu serializes the writes to the connection. gorilla/websocket
+	// allows a single concurrent writer: two RPCs in flight at the same time
+	// interleave their frames and corrupt the stream.
+	writeMu sync.Mutex
+
 	pendingMu sync.Mutex
 	pending   map[string]chan *ResponseFrame
 
@@ -486,7 +491,12 @@ func (c *Client) setConnectResp(resp *ConnectResponse) {
 	c.connectMu.Unlock()
 }
 
+// writeJSON writes one frame to the connection. The write is serialized: the
+// connection accepts a single writer at a time.
 func (c *Client) writeJSON(v any) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
 	conn := c.getConn()
 	if conn == nil {
 		return fmt.Errorf("no connection")

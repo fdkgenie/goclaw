@@ -2,7 +2,9 @@ package goclaw
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -360,5 +362,52 @@ func TestWSReconnectReverifiesCapabilities(t *testing.T) {
 	resp := c.ConnectResponse()
 	if resp == nil || resp.TenantID != tenantID.String() {
 		t.Errorf("reconnect tenant = %q", resp.TenantID)
+	}
+}
+
+// TestConcurrentRPCsAreSerialized drives two RPC calls at the same time on
+// the same connection. gorilla/websocket accepts a single writer: without a
+// write lock the two frames interleave and corrupt the stream (the race
+// detector flags it).
+func TestConcurrentRPCsAreSerialized(t *testing.T) {
+	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: RequiredCapabilities,
+		RPCPayloads: map[string]any{
+			"teams.list": map[string]any{"teams": []interface{}{}, "count": 0},
+		},
+	})
+	c := connectClient(t, f, tenantID)
+
+	const calls = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, calls)
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			resp, err := c.Call(ctx, "teams.list", map[string]any{})
+			if err != nil {
+				errs <- err
+				return
+			}
+			if !resp.OK {
+				errs <- fmt.Errorf("rpc not ok: %+v", resp.Error)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent rpc: %v", err)
+	}
+
+	if got := len(f.RecordedRPCCalls()); got != calls {
+		t.Fatalf("gateway rpc calls = %d, want %d", got, calls)
 	}
 }
