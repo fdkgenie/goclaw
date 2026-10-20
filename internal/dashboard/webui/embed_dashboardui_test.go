@@ -10,6 +10,18 @@ import (
 	"testing"
 )
 
+// TestAssetsEmbedded verifies that the dashboardui build embeds the bundle.
+// The stub build (no tag) returns nil, so this test lives behind the tag.
+func TestAssetsEmbedded(t *testing.T) {
+	assets := Assets()
+	if assets == nil {
+		t.Fatal("expected embedded assets with the dashboardui build tag")
+	}
+	if _, err := fs.Stat(assets, "dist"); err != nil {
+		t.Fatalf("stat dist: %v", err)
+	}
+}
+
 // TestEmbeddedBundleIsUsable verifies the embedded dashboard bundle. The
 // bundle is only populated when the SPA was built before the binary was
 // linked (make dashboard-build), so the test skips when it is empty and

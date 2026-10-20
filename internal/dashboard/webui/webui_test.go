@@ -9,12 +9,6 @@ import (
 	"testing/fstest"
 )
 
-func TestAssetsFallbackNil(t *testing.T) {
-	if Assets() != nil {
-		t.Fatal("expected Assets() to be nil without the dashboardui build tag")
-	}
-}
-
 func testFS() fs.FS {
 	return fstest.MapFS{
 		"index.html":    {Data: []byte("<html>dashboard shell</html>")},
