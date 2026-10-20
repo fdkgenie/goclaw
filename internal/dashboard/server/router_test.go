@@ -39,9 +39,14 @@ func testRouterWithHub(t *testing.T) (*Router, *live.Hub, *SessionManager) {
 	return NewRouter(cfg, state, nil, nil, hub, sm, rl, activity.NewRingBuffer()), hub, sm
 }
 
+// streamStatus returns the status code of a GET /api/stream request. The
+// request carries a short deadline so a regression that lets the stream
+// through fails the test instead of blocking on the open SSE connection.
 func streamStatus(t *testing.T, router *Router, cookie *http.Cookie) int {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil).WithContext(ctx)
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

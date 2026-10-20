@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import ReactDOM from "react-dom/client";
 import { OverviewPage } from "./OverviewPage";
 import type { LiveKPI } from "../api/types";
@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  root.unmount();
+  act(() => root.unmount());
   container.remove();
 });
 

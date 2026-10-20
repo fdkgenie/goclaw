@@ -49,6 +49,23 @@ Use the returned key as `GOCLAW_API_KEY`. The gateway enforces tenant scope
 server-side, so the dashboard can never read another tenant's data even if
 misconfigured.
 
+### 3.1 Fail-Closed Behaviour
+
+The tenant canary (`GET /v1/agents` on the gateway) is re-run on **every**
+gateway reconnect, not just at startup:
+
+| Phase | Behaviour |
+|-------|-----------|
+| Startup | The canary runs before the HTTP server starts. A mismatch aborts the daemon. |
+| Gateway disconnect | The circuit breaker opens. The data API and the SSE stream answer `503`. |
+| Reconnect | The canary re-runs. If it fails, the client keeps backing off and stays disconnected, and the service stays `503`. |
+| Canary passes | The breaker closes, the live state is marked unverified, and the service resumes. |
+
+`GET /api/session` stays reachable while degraded so the SPA can still render
+its shell instead of the login screen. A `503` from the data API therefore
+means "the gateway connection dropped and the tenant is not verified yet" —
+check the gateway, not the dashboard credentials.
+
 ## 3. Provisioning Steps
 
 1. Install the binary:
@@ -66,11 +83,15 @@ misconfigured.
 3. Write the environment file `/etc/goclaw/dashboard.env` with the variables from
    §2 (never commit secrets to version control).
 
-4. Optional: build and copy the frontend UI:
+4. Optional: build and copy the frontend UI.
+   The release binary embeds the built SPA, so a plain install needs no extra
+   step. To rebuild it from source:
    ```bash
-   cd ui/dashboard && pnpm install --frozen-lockfile && pnpm build
-   # Copy dist to /var/lib/goclaw/dashboard-ui/dist (or set DASHBOARD_WEB_DIR)
+   make dashboard-build   # builds the SPA and links it into ./goclaw-dashboard
    ```
+   To serve the UI from a directory instead (e.g. for hot iteration), point
+   `DASHBOARD_WEB_DIR` at a built `ui/dashboard/dist` directory or pass
+   `--web-dir` to the binary.
 
 5. Install the systemd unit:
    ```bash
@@ -135,7 +156,26 @@ systemctl start goclaw-dashboard
 journalctl -u goclaw-dashboard -n 50
 ```
 
-## 7. Troubleshooting
+## 7. HTTP Surface
+
+All API paths require the session cookie issued by `POST /api/login` (the
+cookie is `HttpOnly`; the login response body never contains the token).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/login` | Exchange `DASHBOARD_PASSWORD` for the session cookie |
+| `POST` | `/api/logout` | Invalidate the session and clear the cookie |
+| `GET` | `/api/session` | Authenticated state; used by the SPA to restore a session on reload |
+| `GET` | `/api/overview` | Composite KPI (live runs, task KPI, cost) |
+| `GET` | `/api/orgchart` | Team/agent DAG |
+| `GET` | `/api/cost` | Cost summary and top-N breakdown |
+| `GET` | `/api/activity` | Recent activity from the in-memory ring buffer (`?limit=`, 1..500) |
+| `GET` | `/api/stream` | Server-Sent Events: initial snapshot then live deltas |
+
+`GET /api/stream` is the live SSE channel the SPA subscribes to. It requires a
+valid session and is gated by the same fail-closed breaker as the data API.
+
+## 8. Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
@@ -143,4 +183,7 @@ journalctl -u goclaw-dashboard -n 50
 | `exit status 1`, `missing capability` | Gateway missing B1/B2 capabilities | Upgrade gateway to a build with B1+B2 merged |
 | `401` on all API calls | Missing/invalid session cookie | Log in via `/api/login` with `DASHBOARD_PASSWORD` |
 | `403` on POST from reverse proxy | Missing/mismatched `Origin` header | Configure proxy to forward `Origin` |
+| `503` on data API and `/api/stream` | Gateway disconnected; tenant not re-verified yet | Check the gateway and the `security.dashboard.tenant_mismatch` log |
+| `404` on `/` with "dashboard UI not built" | Binary built without the `dashboardui` tag | Rebuild with `make dashboard-build`, or set `DASHBOARD_WEB_DIR` |
 | Service won't start, sandbox denied | `ProtectSystem=strict` blocking a path | Add path to `ReadWritePaths` |
+
