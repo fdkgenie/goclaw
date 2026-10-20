@@ -75,6 +75,7 @@ type FakeGoClaw struct {
 
 	recordedHTTP     []http.Header
 	recordedConnect  []connectParams
+	recordedRPC      []rpcCall
 	connectResponses int
 }
 
@@ -83,6 +84,12 @@ type connectParams struct {
 	TenantID   string `json:"tenant_id"`
 	UserID     string `json:"user_id"`
 	RemoteAddr string
+}
+
+// rpcCall is one RPC request frame the fake received from a client.
+type rpcCall struct {
+	Method string
+	Params json.RawMessage
 }
 
 // NewFakeGoClaw starts the fake server. t.Cleanup is used to close it.
@@ -150,6 +157,16 @@ func (f *FakeGoClaw) RecordedConnectParams() []connectParams {
 	defer f.mu.Unlock()
 	out := make([]connectParams, len(f.recordedConnect))
 	copy(out, f.recordedConnect)
+	return out
+}
+
+// RecordedRPCCalls returns the RPC request frames the fake received (the
+// "connect" handshake excluded).
+func (f *FakeGoClaw) RecordedRPCCalls() []rpcCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]rpcCall, len(f.recordedRPC))
+	copy(out, f.recordedRPC)
 	return out
 }
 
@@ -365,6 +382,9 @@ func (f *FakeGoClaw) handleRPC(conn *websocket.Conn, req *protocol.RequestFrame)
 		_ = conn.WriteJSON(protocol.NewOKResponse(req.ID, payload))
 		f.writeMu.Unlock()
 	default:
+		f.mu.Lock()
+		f.recordedRPC = append(f.recordedRPC, rpcCall{Method: req.Method, Params: req.Params})
+		f.mu.Unlock()
 		payload := map[string]any{"ok": true}
 		if f.cfg.RPCPayloads != nil {
 			if mock, ok := f.cfg.RPCPayloads[req.Method]; ok {

@@ -328,7 +328,17 @@ func (c *Client) sleepWithBackoff(ctx context.Context, delay *time.Duration) err
 }
 
 // Call sends an RPC request and waits for the matching response.
+//
+// The method must be on the read-only allowlist: the dashboard never
+// mutates gateway state, so a non-allowlisted method (an agent/exec
+// mutation) is rejected before the frame is written and the gateway never
+// sees the call.
 func (c *Client) Call(ctx context.Context, method string, params any) (*ResponseFrame, error) {
+	if !IsAllowedRPCMethod(method) {
+		LogBlocked("rpc", method, "")
+		return nil, fmt.Errorf("rpc method not allowed: %s", method)
+	}
+
 	reqID := uuid.NewString()
 	req := protocol.RequestFrame{
 		Type:   protocol.FrameTypeRequest,

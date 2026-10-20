@@ -2,6 +2,7 @@ package goclaw
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,7 +181,7 @@ func TestWSCall(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	resp, err := c.Call(ctx, "agents.list", map[string]any{"limit": 10})
+	resp, err := c.Call(ctx, "teams.list", map[string]any{})
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -189,6 +190,77 @@ func TestWSCall(t *testing.T) {
 	}
 	if resp.ID == "" {
 		t.Fatal("empty response ID")
+	}
+}
+
+// TestWSDisallowedRPCMethodRejected proves the client enforces the
+// read-only allowlist: a mutating method is rejected before the frame is
+// written, so the gateway never receives it.
+func TestWSDisallowedRPCMethodRejected(t *testing.T) {
+	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: RequiredCapabilities,
+	})
+	c := connectClient(t, f, tenantID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	blocked := []string{
+		"agents.delete",
+		"agents.update",
+		"agents.links.create",
+		"chat.send",
+		"config.apply",
+		"teams.create",
+		"teams.members.add",
+		"exec.run",
+	}
+	for _, method := range blocked {
+		resp, err := c.Call(ctx, method, map[string]any{"id": "x"})
+		if err == nil {
+			t.Fatalf("Call(%q) returned a response, want an error", method)
+		}
+		if resp != nil {
+			t.Fatalf("Call(%q) returned a response frame, want nil", method)
+		}
+		if !strings.Contains(err.Error(), "not allowed") {
+			t.Fatalf("Call(%q) error = %v, want a not-allowed error", method, err)
+		}
+	}
+
+	if calls := f.RecordedRPCCalls(); len(calls) != 0 {
+		t.Fatalf("gateway received %d rpc calls, want 0 (blocked methods must not be sent): %+v", len(calls), calls)
+	}
+}
+
+// TestWSAllowedRPCMethodReachesGateway proves the allowlist does not break
+// the read-only calls the dashboard actually makes.
+func TestWSAllowedRPCMethodReachesGateway(t *testing.T) {
+	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: RequiredCapabilities,
+	})
+	c := connectClient(t, f, tenantID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := c.Call(ctx, "agents.links.list", map[string]any{"agentId": "a1"}); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+
+	calls := f.RecordedRPCCalls()
+	if len(calls) != 1 {
+		t.Fatalf("gateway received %d rpc calls, want 1", len(calls))
+	}
+	if calls[0].Method != "agents.links.list" {
+		t.Fatalf("gateway received method %q, want agents.links.list", calls[0].Method)
 	}
 }
 
@@ -239,7 +311,7 @@ func TestWSOutstandingCallsFailOnDisconnect(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := c.Call(ctx, "agents.list", nil)
+		_, err := c.Call(ctx, "teams.list", map[string]any{})
 		done <- err
 	}()
 
