@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,12 @@ type mockPendingHTTPStore struct {
 	entries            []store.PendingMessage
 	compactedDeleteIDs []uuid.UUID
 	compactedSummary   *store.PendingMessage
+
+	// compacted is closed once Compact has finished. The compaction runs in a
+	// background goroutine, so tests must wait on this channel instead of
+	// sleeping — a sleep is not a happens-before edge and trips the race detector.
+	compacted   chan struct{}
+	compactOnce sync.Once
 }
 
 func (m *mockPendingHTTPStore) AppendBatch(ctx context.Context, msgs []store.PendingMessage) error {
@@ -65,6 +72,9 @@ func (m *mockPendingHTTPStore) Compact(ctx context.Context, deleteIDs []uuid.UUI
 		kept = append([]store.PendingMessage{*summary}, kept...)
 	}
 	m.entries = kept
+	if m.compacted != nil {
+		m.compactOnce.Do(func() { close(m.compacted) })
+	}
 	return nil
 }
 
@@ -123,6 +133,7 @@ func TestHandleCompact_ManualTriggerCompactsRawMessages(t *testing.T) {
 			{ID: uuid.New(), ChannelName: "tg", HistoryKey: "chat-1", Body: "msg 2", Sender: "user2"},
 			{ID: uuid.New(), ChannelName: "tg", HistoryKey: "chat-1", Body: "msg 3", Sender: "user1"},
 		},
+		compacted: make(chan struct{}),
 	}
 
 	reg := providers.NewRegistry(store.TenantIDFromContext)
@@ -154,8 +165,14 @@ func TestHandleCompact_ManualTriggerCompactsRawMessages(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", res)
 	}
 
-	// Wait briefly for background goroutine to execute
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the background goroutine to finish the compaction. The channel
+	// is closed by the store at the end of Compact, which gives the test a
+	// happens-before edge on the compacted entries and the provider call count.
+	select {
+	case <-pendingStore.compacted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for background compaction to finish")
+	}
 
 	if mockProv.chatCalls != 1 {
 		t.Fatalf("expected 1 LLM chat call, got %d", mockProv.chatCalls)
