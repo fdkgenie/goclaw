@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -39,7 +40,7 @@ func NewHTTPClient(baseURL, apiKey, tenantID string, timeout time.Duration) *HTT
 
 // Get issues a GET request to path if allow-listed, decodes JSON into out.
 func (c *HTTPClient) Get(ctx context.Context, path string, out any) error {
-	if !IsAllowedHTTPPath("GET", path) {
+	if !IsAllowedHTTPPath("GET", stripQuery(path)) {
 		LogBlocked("http", "GET", path)
 		return fmt.Errorf("http path not allowed: GET %s", path)
 	}
@@ -66,4 +67,13 @@ func (c *HTTPClient) Get(ctx context.Context, path string, out any) error {
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// stripQuery returns the URL path without the query string, for allowlist
+// matching. The query is preserved on the actual request.
+func stripQuery(path string) string {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		return path[:i]
+	}
+	return path
 }
