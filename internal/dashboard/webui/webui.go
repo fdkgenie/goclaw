@@ -23,17 +23,33 @@ func Handler(webDir string) http.Handler {
 	}
 	assets := Assets()
 	if assets == nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "dashboard UI not built; rebuild with -tags dashboardui or pass --web-dir", http.StatusNotFound)
-		})
+		return notBuiltHandler()
 	}
+	return handlerForEmbedded(assets)
+}
+
+// handlerForEmbedded serves the SPA from the embedded bundle, which lives
+// under "dist" (see embed.go).
+func handlerForEmbedded(assets fs.FS) http.Handler {
 	dist, err := fs.Sub(assets, "dist")
 	if err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "embedded dashboard UI is invalid", http.StatusInternalServerError)
 		})
 	}
+	// The bundle is only populated when the SPA was built before the binary
+	// was linked. A placeholder-only bundle means the UI was not built.
+	if _, err := fs.Stat(dist, "index.html"); err != nil {
+		return notBuiltHandler()
+	}
 	return handlerForFS(dist)
+}
+
+// notBuiltHandler explains how to build or provide the dashboard UI.
+func notBuiltHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "dashboard UI not built; rebuild with -tags dashboardui or pass --web-dir", http.StatusNotFound)
+	})
 }
 
 func handlerForFS(root fs.FS) http.Handler {

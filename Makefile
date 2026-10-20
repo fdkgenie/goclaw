@@ -167,10 +167,13 @@ desktop-dmg: desktop-build
 # ── Dashboard service ──
 dashboard-build:
 	cd ui/dashboard && pnpm install --frozen-lockfile && pnpm build
-	rm -rf internal/dashboard/webui/dist && mkdir -p internal/dashboard/webui/dist
-	cp -r ui/dashboard/dist/* internal/dashboard/webui/dist/
+	mkdir -p internal/dashboard/webui/dist
+	rm -rf internal/dashboard/webui/dist/*
+	cp -r ui/dashboard/dist/. internal/dashboard/webui/dist/
 	CGO_ENABLED=0 go build -tags dashboardui -ldflags="$(LDFLAGS)" -o goclaw-dashboard ./cmd/dashboard
 
 dashboard-clean:
 	rm -rf internal/dashboard/webui/dist
+	mkdir -p internal/dashboard/webui/dist
+	touch internal/dashboard/webui/dist/.gitkeep
 	rm -f goclaw-dashboard
