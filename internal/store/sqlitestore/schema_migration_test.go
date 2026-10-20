@@ -373,6 +373,28 @@ func openTestDBAtVersion(t *testing.T, targetVersion int) *sql.DB {
 		db.Exec(`ALTER TABLE vault_documents DROP COLUMN chat_id`)
 	}
 
+	if targetVersion < 61 {
+		// Undo migration 60: drop the tenant/team indexes and the team_id column,
+		// then restore the legacy unique index without team_id.
+		db.Exec(`DROP INDEX IF EXISTS idx_usage_event_rollups_unique`)
+		db.Exec(`DROP INDEX IF EXISTS idx_usage_event_rollups_tenant_team_hour`)
+		db.Exec(`ALTER TABLE usage_event_rollups DROP COLUMN team_id`)
+		db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_rollups_unique
+			ON usage_event_rollups(
+				tenant_id,
+				bucket_hour,
+				event_type,
+				resource_type,
+				resource_name,
+				source,
+				COALESCE(agent_id, '00000000-0000-0000-0000-000000000000'),
+				channel,
+				provider,
+				model,
+				status
+			)`)
+	}
+
 	// Set version back to target.
 	db.Exec("UPDATE schema_version SET version = ?", targetVersion)
 	return db

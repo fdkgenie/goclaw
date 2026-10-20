@@ -403,3 +403,51 @@ func TestCronAndHeartbeat_NilTenantOnlyOwner(t *testing.T) {
 		t.Error("owner should receive an unscoped heartbeat event")
 	}
 }
+
+// ---- Team/link event delivery ----
+
+func TestTeamAndLinkEvents_TenantIsolation(t *testing.T) {
+	tenantA := uuid.MustParse("00000000-0000-0000-0000-00000000000a")
+	tenantB := uuid.MustParse("00000000-0000-0000-0000-00000000000b")
+
+	adminA := makeClient(permissions.RoleAdmin, "admin-a", tenantA)
+	adminB := makeClient(permissions.RoleAdmin, "admin-b", tenantB)
+
+	names := []string{
+		protocol.EventTeamCreated,
+		protocol.EventTeamUpdated,
+		protocol.EventTeamDeleted,
+		protocol.EventTeamMemberAdded,
+		protocol.EventTeamMemberRemoved,
+		protocol.EventAgentLinkCreated,
+		protocol.EventAgentLinkUpdated,
+		protocol.EventAgentLinkDeleted,
+	}
+
+	for _, name := range names {
+		evt := makeEvent(name, tenantA, map[string]any{"team_id": "team-a"})
+		if !clientCanReceiveEvent(adminA, evt) {
+			t.Errorf("%s: tenant A admin should receive tenant A event", name)
+		}
+		if clientCanReceiveEvent(adminB, evt) {
+			t.Errorf("%s: tenant B admin must NOT receive tenant A event", name)
+		}
+	}
+}
+
+func TestAgentLinkEvents_BlockedForViewer(t *testing.T) {
+	tenantA := uuid.MustParse("00000000-0000-0000-0000-00000000000a")
+	viewerA := makeClient(permissions.RoleViewer, "viewer-a", tenantA)
+	viewerA.SetTeamAccess([]string{"team-a"})
+
+	for _, name := range []string{
+		protocol.EventAgentLinkCreated,
+		protocol.EventAgentLinkUpdated,
+		protocol.EventAgentLinkDeleted,
+	} {
+		evt := makeEvent(name, tenantA, map[string]any{"team_id": "team-a"})
+		if clientCanReceiveEvent(viewerA, evt) {
+			t.Errorf("%s: viewer must NOT receive agent-link events (admin-only)", name)
+		}
+	}
+}

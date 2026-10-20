@@ -16,7 +16,73 @@ var schemaSQL string
 
 // SchemaVersion is the current SQLite schema version.
 // Bump this when adding new migration steps below.
-const SchemaVersion = 60
+const SchemaVersion = 61
+
+// migration60UsageEventRollupTeamSQL rebuilds closed-hour rollups with the team
+// dimension. Time text is normalized to UTC because legacy rows may be stored in
+// driver space form or RFC3339 (including offsets).
+var migration60UsageEventRollupTeamSQL = `DROP INDEX IF EXISTS idx_usage_event_rollups_unique;
+ALTER TABLE usage_event_rollups ADD COLUMN team_id TEXT;
+DELETE FROM usage_event_rollups;
+INSERT INTO usage_event_rollups (
+    id, tenant_id, bucket_hour, event_type, resource_type, resource_name, source,
+    agent_id, team_id, channel, provider, model, status,
+    input_tokens, output_tokens, total_tokens,
+    cache_read_tokens, cache_create_tokens, thinking_tokens, cost_usd,
+    duration_ms, call_count, error_count, created_at, updated_at
+)
+SELECT
+    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+    substr(lower(hex(randomblob(2))), 2) || '-' ||
+    substr('89ab', abs(random()) % 4 + 1, 1) ||
+    substr(lower(hex(randomblob(2))), 2) || '-' ||
+    lower(hex(randomblob(6))),
+    tenant_id,
+    ` + sqliteNormalizedTimeExpr("bucket_hour") + ` AS bucket_hour,
+    event_type,
+    resource_type,
+    resource_name,
+    source,
+    agent_id,
+    team_id,
+    channel,
+    provider,
+    model,
+    status,
+    COALESCE(SUM(input_tokens), 0),
+    COALESCE(SUM(output_tokens), 0),
+    COALESCE(SUM(total_tokens), 0),
+    COALESCE(SUM(cache_read_tokens), 0),
+    COALESCE(SUM(cache_create_tokens), 0),
+    COALESCE(SUM(thinking_tokens), 0),
+    COALESCE(SUM(cost_usd), 0),
+    CASE WHEN COALESCE(SUM(call_count), 0) > 0
+        THEN COALESCE(SUM(duration_ms * call_count), 0) / SUM(call_count)
+        ELSE 0 END,
+    COALESCE(SUM(call_count), 0),
+    COALESCE(SUM(error_count), 0),
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+FROM usage_events
+WHERE ` + sqliteNormalizedTimeExpr("bucket_hour") + ` < strftime('%Y-%m-%d %H:00:00', 'now')
+GROUP BY tenant_id, ` + sqliteNormalizedTimeExpr("bucket_hour") + `, event_type, resource_type, resource_name, source, agent_id, team_id, channel, provider, model, status;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_rollups_unique
+    ON usage_event_rollups(
+        tenant_id,
+        bucket_hour,
+        event_type,
+        resource_type,
+        resource_name,
+        source,
+        COALESCE(agent_id, '00000000-0000-0000-0000-000000000000'),
+        COALESCE(team_id, '00000000-0000-0000-0000-000000000000'),
+        channel,
+        provider,
+        model,
+        status
+    );
+CREATE INDEX IF NOT EXISTS idx_usage_event_rollups_tenant_team_hour
+    ON usage_event_rollups(tenant_id, team_id, bucket_hour DESC);`
 
 // migrations maps version → SQL to apply when upgrading FROM that version.
 // schema.sql always represents the LATEST full schema (for fresh DBs).
@@ -95,6 +161,8 @@ BEGIN
 END;`
 
 var migrations = map[int]string{
+	// Version 60 → 61: add team_id dimension to usage_event_rollups and rebuild closed-hour buckets.
+	60: migration60UsageEventRollupTeamSQL,
 	// Version 59 → 60: keep an append-only copy of group capture. Pending rows are
 	// deleted when the buffer is handed to the agent and when compaction replaces
 	// them with a summary; before this table those deletes destroyed the only copy.
@@ -1707,6 +1775,8 @@ func idempotentColumnMigration(version int) (string, string, bool) {
 		return "webhook_calls", "last_heartbeat_at", true
 	case 55:
 		return "mcp_servers", "require_user_credentials", true
+	case 60:
+		return "usage_event_rollups", "team_id", true
 	default:
 		return "", "", false
 	}

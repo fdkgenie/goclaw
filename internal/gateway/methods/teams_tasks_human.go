@@ -88,7 +88,7 @@ func (m *TeamsMethods) handleTaskCancel(ctx context.Context, client *gateway.Cli
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{"ok": true, "status": store.TeamTaskStatusCancelled}))
 
 	if m.msgBus != nil {
-		m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskCancelled, protocol.TeamTaskEventPayload{
+		m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskCancelled, protocol.TeamTaskEventPayload{
 			TeamID:     teamID.String(),
 			TaskID:     taskID.String(),
 			TaskNumber: task.TaskNumber,
@@ -228,7 +228,7 @@ func (m *TeamsMethods) handleTaskRetry(ctx context.Context, client *gateway.Clie
 	if m.msgBus == nil {
 		return
 	}
-	m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskDispatched, protocol.TeamTaskEventPayload{
+	m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskDispatched, protocol.TeamTaskEventPayload{
 		TeamID:     teamID.String(),
 		TaskID:     taskID.String(),
 		TaskNumber: task.TaskNumber,

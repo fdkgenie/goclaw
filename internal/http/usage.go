@@ -291,6 +291,13 @@ func parseUsageEventFilters(r *http.Request) (store.UsageEventQuery, error) {
 		}
 		q.AgentID = &id
 	}
+	if v := values.Get("team_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			return q, fmt.Errorf("invalid team_id")
+		}
+		q.TeamID = &id
+	}
 	q.Channel = values.Get("channel")
 	q.EventType = values.Get("event_type")
 	q.ResourceType = values.Get("resource_type")

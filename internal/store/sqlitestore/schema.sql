@@ -1450,6 +1450,7 @@ CREATE TABLE IF NOT EXISTS usage_event_rollups (
     resource_name TEXT NOT NULL,
     source        TEXT NOT NULL DEFAULT '',
     agent_id      TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    team_id       TEXT,
     channel       TEXT NOT NULL DEFAULT '',
     provider      TEXT NOT NULL DEFAULT '',
     model         TEXT NOT NULL DEFAULT '',
@@ -1477,6 +1478,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_rollups_unique
         resource_name,
         source,
         COALESCE(agent_id, '00000000-0000-0000-0000-000000000000'),
+        COALESCE(team_id, '00000000-0000-0000-0000-000000000000'),
         channel,
         provider,
         model,
@@ -1484,6 +1486,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_rollups_unique
     );
 CREATE INDEX IF NOT EXISTS idx_usage_event_rollups_tenant_hour
     ON usage_event_rollups(tenant_id, bucket_hour DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_event_rollups_tenant_team_hour
+    ON usage_event_rollups(tenant_id, team_id, bucket_hour DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_event_rollups_resource_hour
     ON usage_event_rollups(tenant_id, resource_type, resource_name, bucket_hour DESC);
 

@@ -1570,6 +1570,25 @@ Example:
 
 **Query params:** `from`, `to` (RFC 3339), `agent_id`, `provider`, `model`, `channel`, `group_by`
 
+### Usage Events Analytics
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/usage/events/timeseries` | Time-series rollup points (`team_id` filter) |
+| `GET` | `/v1/usage/events/breakdown` | Rollup breakdown (`team_id` filter, `group_by=team`) |
+| `GET` | `/v1/usage/events/summary` | Summary aggregates (`team_id` filter) |
+
+**Query parameters:**
+- `from`, `to`: RFC 3339 timestamps (inclusive/exclusive)
+- `agent_id`: Agent UUID
+- `team_id`: Team UUID filter
+- `group_by`: For breakdown: `team`, `agent`, `model`, `provider`, `channel`, `source`, `status`, `event_type`, `resource_type`
+- `limit`: Breakdown top-N limit (default 25, max 100, ordered by calls DESC)
+
+**Freshness & Semantics:**
+- Data reflects closed hours only (refreshed by background worker at HH:05).
+- In `group_by=team`, key `""` denotes usage not associated with any team (personal/direct).
+
 **Periods:** `24h`, `today`, `7d`, `30d`
 
 Usage cap policy body:

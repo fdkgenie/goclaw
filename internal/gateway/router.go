@@ -146,6 +146,17 @@ func provisionScopeAllowed(c *Client, method string) bool {
 func standardServerCapabilities() []string {
 	return []string{
 		protocol.CapEventsCronHeartbeatTenantScoped,
+		protocol.CapEventsTeamLinkTenantTagged,
+		protocol.CapUsageEventsTeam,
+		protocol.CapTeamsTasksListHasMore,
+	}
+}
+
+func (r *MethodRouter) serverInfoMap() map[string]any {
+	return map[string]any{
+		"name":         "goclaw",
+		"version":      r.server.version,
+		"capabilities": standardServerCapabilities(),
 	}
 }
 
@@ -343,11 +354,7 @@ func (r *MethodRouter) handleConnect(ctx context.Context, client *Client, req *p
 				"status":       "pending_pairing",
 				"pairing_code": code,
 				"sender_id":    client.id,
-				"server": map[string]any{
-					"name":         "goclaw",
-					"version":      r.server.version,
-					"capabilities": standardServerCapabilities(),
-				},
+				"server":       r.serverInfoMap(),
 			}))
 			return
 		}
@@ -406,11 +413,7 @@ func (r *MethodRouter) sendConnectResponse(ctx context.Context, client *Client, 
 		"is_owner":        client.IsOwner(),
 		"is_master_scope": store.IsMasterScope(scopedCtx),
 		"edition":         edition.Current().Name,
-		"server": map[string]any{
-			"name":         "goclaw",
-			"version":      r.server.version,
-			"capabilities": standardServerCapabilities(),
-		},
+		"server":          r.serverInfoMap(),
 	}
 
 	// Enrich with tenant name/slug if tenant store available and tenant is set

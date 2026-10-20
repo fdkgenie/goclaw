@@ -1033,6 +1033,60 @@
         "responses": { "200": { "description": "Usage summary" } }
       }
     },
+    "/v1/usage/events/timeseries": {
+      "get": {
+        "tags": ["Usage"],
+        "summary": "Usage event timeseries rollups",
+        "parameters": [
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "agent_id", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "team_id", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "group_by", "in": "query", "schema": { "type": "string", "enum": ["hour", "day"], "default": "hour" } }
+        ],
+        "responses": {
+          "200": { "description": "Usage event timeseries points" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/v1/usage/events/breakdown": {
+      "get": {
+        "tags": ["Usage"],
+        "summary": "Usage event rollup breakdown",
+        "parameters": [
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "agent_id", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "team_id", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "group_by", "in": "query", "schema": { "type": "string", "enum": ["team", "agent", "model", "provider", "channel", "source", "status", "event_type", "resource_type"] } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 25, "maximum": 100 } }
+        ],
+        "responses": {
+          "200": { "description": "Usage event breakdown rows" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/v1/usage/events/summary": {
+      "get": {
+        "tags": ["Usage"],
+        "summary": "Usage event summary aggregates",
+        "parameters": [
+          { "name": "from", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "to", "in": "query", "schema": { "type": "string", "format": "date-time" } },
+          { "name": "agent_id", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "team_id", "in": "query", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Usage event summary" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
     "/v1/activity": {
       "get": {
         "tags": ["Activity"],

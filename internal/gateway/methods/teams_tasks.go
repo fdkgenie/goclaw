@@ -21,8 +21,12 @@ import (
 // maxCommentLength caps comment/reason content to prevent DB bloat.
 const maxCommentLength = 10000
 
-func taskBusEvent(name string, payload any) bus.Event {
-	return bus.Event{Name: name, Payload: payload}
+func taskBusEvent(ctx context.Context, name string, payload any) bus.Event {
+	return bus.Event{
+		Name:     name,
+		TenantID: store.TenantIDFromContext(ctx),
+		Payload:  payload,
+	}
 }
 
 func taskNowUTC() string {
@@ -214,7 +218,7 @@ func (m *TeamsMethods) handleTaskApprove(ctx context.Context, client *gateway.Cl
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{"ok": true}))
 
 	if m.msgBus != nil {
-		m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskApproved, protocol.TeamTaskEventPayload{
+		m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskApproved, protocol.TeamTaskEventPayload{
 			TeamID:    teamID.String(),
 			TaskID:    taskID.String(),
 			Status:    store.TeamTaskStatusCompleted,
@@ -271,7 +275,7 @@ func (m *TeamsMethods) handleTaskReject(ctx context.Context, client *gateway.Cli
 	client.SendResponse(protocol.NewOKResponse(req.ID, map[string]any{"ok": true}))
 
 	if m.msgBus != nil {
-		m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskRejected, protocol.TeamTaskEventPayload{
+		m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskRejected, protocol.TeamTaskEventPayload{
 			TeamID:    teamID.String(),
 			TaskID:    taskID.String(),
 			Status:    store.TeamTaskStatusCancelled,
@@ -344,7 +348,7 @@ func (m *TeamsMethods) handleTaskComment(ctx context.Context, client *gateway.Cl
 		if runes := []rune(commentPreview); len(runes) > 500 {
 			commentPreview = string(runes[:500]) + "..."
 		}
-		m.msgBus.Broadcast(taskBusEvent(protocol.EventTeamTaskCommented, protocol.TeamTaskEventPayload{
+		m.msgBus.Broadcast(taskBusEvent(ctx, protocol.EventTeamTaskCommented, protocol.TeamTaskEventPayload{
 			TeamID:      teamID.String(),
 			TaskID:      taskID.String(),
 			TaskNumber:  task.TaskNumber,
@@ -459,4 +463,3 @@ type taskCreateParams struct {
 	Channel     string `json:"channel"`  // optional scope — defaults to "dashboard"
 	ChatID      string `json:"chatId"`   // optional scope — defaults to teamID
 }
-
