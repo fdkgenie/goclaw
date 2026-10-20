@@ -130,6 +130,21 @@ func TestStoreTask_ListWithFilters(t *testing.T) {
 		t.Errorf("active filter: expected >= 2, got %d", len(active))
 	}
 
+	// A failed task is terminal: it must not be reported as active work.
+	failed := makeTask(teamID, "failed task", store.TeamTaskStatusFailed)
+	if err := ts.CreateTask(ctx, failed); err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+	activeAfterFailure, err := ts.ListTasks(ctx, teamID, "", store.TeamTaskFilterActive, "", "", "", 30, 0)
+	if err != nil {
+		t.Fatalf("ListTasks active: %v", err)
+	}
+	for _, tk := range activeAfterFailure {
+		if tk.ID == failed.ID {
+			t.Errorf("active filter: failed task %s reported as active", failed.Identifier)
+		}
+	}
+
 	// Complete the in-progress task so we can test completed filter.
 	if err := ts.CompleteTask(ctx, inprog.ID, teamID, "done"); err != nil {
 		t.Fatalf("CompleteTask: %v", err)

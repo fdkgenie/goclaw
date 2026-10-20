@@ -187,7 +187,10 @@ func (s *SQLiteTeamStore) ListTasks(ctx context.Context, teamID uuid.UUID, order
 	statusWhere := ""
 	switch statusFilter {
 	case store.TeamTaskFilterActive:
-		statusWhere = "AND t.status NOT IN ('completed','cancelled')"
+		// Active = not terminal. The terminal set is completed, cancelled and
+		// failed (the same set DeleteTask accepts), so a failed task is not
+		// reported as in-flight work.
+		statusWhere = "AND t.status NOT IN ('completed','cancelled','failed')"
 	case store.TeamTaskFilterInReview:
 		statusWhere = "AND t.status = 'in_review'"
 	case store.TeamTaskFilterCompleted:

@@ -50,6 +50,8 @@ const (
 
 // Team task list filter constants (for ListTasks statusFilter parameter).
 const (
+	// Active = every non-terminal status (pending, in_progress, blocked,
+	// stale, in_review). The terminal set is completed, cancelled, failed.
 	TeamTaskFilterActive    = "active" // pending + in_progress + blocked
 	TeamTaskFilterInReview  = "in_review" // only in_review tasks
 	TeamTaskFilterCompleted = "completed" // only completed tasks
