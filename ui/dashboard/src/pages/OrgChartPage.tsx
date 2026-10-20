@@ -60,8 +60,8 @@ export const OrgChartPage = (): React.ReactNode => {
 
   const layout = useMemo(() => (dag ? layoutDAG(dag) : null), [dag]);
 
-  if (error) return <div className="card p-4 text-red-600">{error}</div>;
-  if (!layout) return <div className="card p-4 text-slate-500">{t("orgchart.loading")}</div>;
+  if (error) return <div className="card p-4 text-destructive">{error}</div>;
+  if (!layout) return <div className="card p-4 text-muted-foreground">{t("orgchart.loading")}</div>;
 
   const count = (type: OrgChartNode["type"]) =>
     layout.nodes.filter((n) => n.type === type).length;
@@ -91,7 +91,7 @@ export const OrgChartPage = (): React.ReactNode => {
       </div>
 
       {layout.nodes.length === 0 ? (
-        <p className="text-sm text-slate-500">{t("orgchart.empty")}</p>
+        <p className="text-sm text-muted-foreground">{t("orgchart.empty")}</p>
       ) : (
         <div className="overflow-x-auto">
           <svg

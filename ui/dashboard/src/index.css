@@ -1,20 +1,147 @@
 @import "tailwindcss";
 
-@theme {
-  --color-goclaw-primary: #2563eb;
-  --color-goclaw-dark: #1e3a8a;
+/* Dark mode is driven by a class on <html> (same contract as ui/web). */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens ported 1:1 from ui/web/src/index.css so the dashboard login
+ * renders with the exact same palette, radii and surfaces as the main
+ * product login screen.
+ */
+:root {
+  --background: oklch(0.97 0.005 80);
+  --foreground: oklch(0.17 0.02 55);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.17 0.02 55);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.17 0.02 55);
+  --primary: oklch(0.62 0.19 38);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.94 0.01 80);
+  --secondary-foreground: oklch(0.17 0.02 55);
+  --muted: oklch(0.94 0.01 80);
+  --muted-foreground: oklch(0.52 0.02 50);
+  --accent: oklch(0.94 0.01 80);
+  --accent-foreground: oklch(0.30 0.10 35);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.98 0.02 25);
+  --border: oklch(0.90 0.01 70);
+  --input: oklch(0.90 0.01 70);
+  --ring: oklch(0.62 0.19 38);
+  --success: oklch(0.55 0.2 145);
+  --success-foreground: oklch(0.98 0 0);
+  --warning: oklch(0.77 0.16 75);
+  --warning-foreground: oklch(0.30 0.10 35);
+  --radius: 0.75rem;
   --safe-top: env(safe-area-inset-top);
   --safe-bottom: env(safe-area-inset-bottom);
   --safe-left: env(safe-area-inset-left);
   --safe-right: env(safe-area-inset-right);
 }
 
+.dark {
+  --background: oklch(0.15 0.02 45);
+  --foreground: oklch(0.94 0.01 80);
+  --card: oklch(0.20 0.02 45);
+  --card-foreground: oklch(0.94 0.01 80);
+  --popover: oklch(0.20 0.02 45);
+  --popover-foreground: oklch(0.94 0.01 80);
+  --primary: oklch(0.68 0.18 38);
+  --primary-foreground: oklch(0.98 0.005 80);
+  --secondary: oklch(0.25 0.02 45);
+  --secondary-foreground: oklch(0.94 0.01 80);
+  --muted: oklch(0.22 0.02 45);
+  --muted-foreground: oklch(0.62 0.02 50);
+  --accent: oklch(0.28 0.03 40);
+  --accent-foreground: oklch(0.94 0.01 80);
+  --destructive: oklch(0.65 0.23 25);
+  --destructive-foreground: oklch(0.98 0.02 25);
+  --border: oklch(0.30 0.02 45);
+  --input: oklch(0.25 0.02 45);
+  --ring: oklch(0.68 0.18 38);
+  --success: oklch(0.45 0.15 145);
+  --success-foreground: oklch(0.85 0.1 145);
+  --warning: oklch(0.65 0.15 75);
+  --warning-foreground: oklch(0.88 0.10 80);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 @layer base {
+  * {
+    @apply border-border;
+  }
   html {
     @apply h-dvh;
   }
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* ── Mobile UX utilities (ported from ui/web) ── */
+
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility safe-left {
+  padding-left: env(safe-area-inset-left);
+}
+@utility safe-right {
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Expand touch targets on coarse pointer (touch) devices for small icon buttons */
+@media (pointer: coarse) {
+  /* `:not(.absolute)` keeps the login theme toggle pinned to the corner:
+     an icon button that is already absolutely positioned is its own
+     containing block, so only the ::after expansion is needed. */
+  [data-slot="button"][data-size="icon"]:not(.absolute) {
+    position: relative;
+  }
+  [data-slot="button"][data-size="icon"]::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+}
+
+/* Landscape compact mode for phones */
+@media (orientation: landscape) and (max-height: 500px) {
+  .landscape-compact {
+    padding-block: 0.25rem;
   }
 }
 
@@ -32,16 +159,16 @@
     @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-primary {
-    @apply btn bg-goclaw-dark text-white hover:bg-blue-700;
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:pointer-events-none bg-primary text-primary-foreground shadow-sm hover:bg-primary/90;
   }
   .btn-outline {
-    @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:pointer-events-none border border-border bg-card text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground;
   }
   .card {
-    @apply rounded-xl border border-slate-200 bg-white p-6 shadow-sm;
+    @apply rounded-xl border border-border bg-card p-6 shadow-sm;
   }
   .stale-badge {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 animate-pulse;
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-warning/15 text-warning-foreground animate-pulse;
   }
 }
 

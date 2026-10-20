@@ -55,7 +55,7 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <div className="card">
-        <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">{t("overview.live_runs")}</div>
+        <div className="text-muted-foreground text-xs uppercase tracking-wider mb-1">{t("overview.live_runs")}</div>
         <div className="text-2xl font-bold">{total}</div>
         <div className="flex gap-2 mt-2 items-center">
           <span className="text-sm">{t("overview.traced")}: {traced}</span>
@@ -66,20 +66,20 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
       </div>
 
       <div className="card">
-        <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">{t("overview.active_runs")}</div>
+        <div className="text-muted-foreground text-xs uppercase tracking-wider mb-1">{t("overview.active_runs")}</div>
         <div className="text-2xl font-bold">{fmt(total, quality === "exact")}</div>
       </div>
 
       <div className="card">
-        <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">{t("overview.tasks")}</div>
+        <div className="text-muted-foreground text-xs uppercase tracking-wider mb-1">{t("overview.tasks")}</div>
         <div className="text-2xl font-bold" data-testid="tasks-active">
           {activeTasks ? fmt(activeTasks.value, activeTasks.exact) : "—"}
         </div>
-        <div className="text-sm text-slate-500 mt-1" data-testid="tasks-in-review">
+        <div className="text-sm text-muted-foreground mt-1" data-testid="tasks-in-review">
           {t("overview.in_review")}: {inReview ? fmt(inReview.value, inReview.exact) : "—"}
         </div>
         {statusGroups.length > 0 && (
-          <ul className="mt-2 text-xs text-slate-500" data-testid="tasks-by-status">
+          <ul className="mt-2 text-xs text-muted-foreground" data-testid="tasks-by-status">
             {statusGroups.map((g) => (
               <li key={g.status}>
                 {g.status}: {fmt(g.count.value, g.count.exact)}
@@ -90,7 +90,7 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
       </div>
 
       <div className="card">
-        <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">{t("overview.cost")}</div>
+        <div className="text-muted-foreground text-xs uppercase tracking-wider mb-1">{t("overview.cost")}</div>
         <div className="text-2xl font-bold" data-testid="cost-total">
           {costUSD === undefined ? "—" : `$${costUSD.toFixed(2)}`}
         </div>
