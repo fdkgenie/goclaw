@@ -277,6 +277,112 @@ func TestDisconnectFailsClosedUntilCanaryReverifies(t *testing.T) {
 	}
 }
 
+// TestStartupDoesNotBlockOnSilentGateway proves the startup is bounded: a
+// gateway that accepts the connection but never answers the backfill RPC
+// must not keep the HTTP server from coming up.
+//
+// The startup backfill used to run with the signal-only context, so a
+// gateway that held the connection open without answering blocked the HTTP
+// startup forever. The backfill now runs under a deadline: the startup ends
+// when the deadline fires, the failure is logged, and the service keeps
+// serving.
+func TestStartupDoesNotBlockOnSilentGateway(t *testing.T) {
+	tenantID := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: goclaw.RequiredCapabilities,
+		Agents: []testutil.AgentData{
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
+		},
+		RPCPayloads: map[string]any{
+			"teams.list": map[string]any{
+				"teams": []map[string]any{{"id": "team-a", "name": "Team A"}},
+			},
+		},
+		// The gateway accepts the connection and never answers the task
+		// event RPC the startup backfill issues.
+		SilentRPCMethods: []string{"teams.events.list"},
+	})
+
+	const addr = "127.0.0.1:19799"
+	cfg := &config.Config{
+		GoClawAPIURL:      f.URL(),
+		GoClawWSURL:       f.WSURL(),
+		GoClawAPIKey:      "ak",
+		DashboardAddr:     addr,
+		DashboardPassword: "pw",
+		TenantID:          tenantID,
+	}
+	cfg.Sanitize()
+
+	goclaw.Reset()
+	t.Cleanup(goclaw.Reset)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	// A short, injectable bound: the test must not sleep for the
+	// production timeout.
+	const backfillTimeout = 500 * time.Millisecond
+
+	errc := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		errc <- runWithOptions(ctx, cfg, serviceOptions{
+			ReconnectMin:    20 * time.Millisecond,
+			ReconnectMax:    100 * time.Millisecond,
+			BackfillTimeout: backfillTimeout,
+		})
+	}()
+
+	base := "http://" + addr
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// The server must come up even though the gateway never answers the
+	// backfill RPC. Without the bound the startup blocks here forever.
+	waitForStatus(t, 15*time.Second, base+"/api/overview", nil, func(code int) bool {
+		return code == http.StatusUnauthorized
+	}, "dashboard HTTP server did not start while the gateway stayed silent")
+
+	// The startup must have been released by the deadline, not later.
+	if elapsed := time.Since(start); elapsed > backfillTimeout+5*time.Second {
+		t.Fatalf("dashboard startup took %s, want it bounded by the %s backfill timeout", elapsed, backfillTimeout)
+	}
+
+	// The backfill did try: the silent RPC was requested.
+	silent := false
+	for _, call := range f.RecordedRPCCalls() {
+		if call.Method == "teams.events.list" {
+			silent = true
+			break
+		}
+	}
+	if !silent {
+		t.Fatal("the startup backfill never issued the teams.events.list RPC")
+	}
+
+	// The failed backfill is not fatal: the tenant canary passed, so the
+	// service keeps serving.
+	cookie := login(t, client, base)
+	waitForStatus(t, 15*time.Second, base+"/api/overview", cookie, func(code int) bool {
+		return code == http.StatusOK
+	}, "overview never returned 200 after the silent gateway")
+
+	// Graceful shutdown.
+	cancel()
+	select {
+	case err := <-errc:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("run returned error: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("run did not return after cancel")
+	}
+}
+
 func login(t *testing.T, client *http.Client, base string) *http.Cookie {
 	t.Helper()
 	body := strings.NewReader(`{"password":"pw"}`)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -165,6 +166,50 @@ func TestFakeGoClawMissingCapability(t *testing.T) {
 	}
 	if found {
 		t.Fatal("should not have teams.tasks.list.has_more capability")
+	}
+}
+
+// TestFakeGoClawSilentRPCMethod proves the silent mode: the request is
+// recorded but no response frame is written, so the caller waits until its
+// own deadline.
+func TestFakeGoClawSilentRPCMethod(t *testing.T) {
+	tenantID := mustParseUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := NewFakeGoClaw(t, Config{
+		Role:             "admin",
+		TenantID:         tenantID,
+		SilentRPCMethods: []string{"teams.events.list"},
+	})
+
+	conn := mustDialWS(t, f)
+	sendConnect(t, conn)
+
+	req := protocol.RequestFrame{
+		Type:   protocol.FrameTypeRequest,
+		ID:     "req-2",
+		Method: "teams.events.list",
+		Params: json.RawMessage(`{"team_id":"team-a"}`),
+	}
+	if err := conn.WriteJSON(req); err != nil {
+		t.Fatalf("write rpc: %v", err)
+	}
+
+	// The request reached the fake.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(f.RecordedRPCCalls()) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	calls := f.RecordedRPCCalls()
+	if len(calls) != 1 || calls[0].Method != "teams.events.list" {
+		t.Fatalf("recorded calls = %+v, want one teams.events.list", calls)
+	}
+
+	// But no answer comes back.
+	conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("the silent RPC was answered, want no response frame")
 	}
 }
 

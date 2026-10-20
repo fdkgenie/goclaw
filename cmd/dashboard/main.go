@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -29,6 +30,11 @@ const (
 
 	defaultReconnectMin = 500 * time.Millisecond
 	defaultReconnectMax = 30 * time.Second
+
+	// defaultBackfillTimeout bounds the activity backfill. The backfill
+	// waits for gateway RPC answers, so a gateway that accepts the
+	// connection but never answers must not hold the caller.
+	defaultBackfillTimeout = 15 * time.Second
 )
 
 // serviceOptions tunes the runtime behaviour of the dashboard daemon. Zero
@@ -38,6 +44,11 @@ type serviceOptions struct {
 	// backoff.
 	ReconnectMin time.Duration
 	ReconnectMax time.Duration
+	// BackfillTimeout bounds the activity backfill (startup and
+	// reconnect). The backfill issues RPCs on the gateway connection and
+	// waits for the answers, so the deadline is what keeps a silent
+	// gateway from blocking the startup.
+	BackfillTimeout time.Duration
 }
 
 func (o serviceOptions) withDefaults() serviceOptions {
@@ -46,6 +57,9 @@ func (o serviceOptions) withDefaults() serviceOptions {
 	}
 	if o.ReconnectMax <= 0 {
 		o.ReconnectMax = defaultReconnectMax
+	}
+	if o.BackfillTimeout <= 0 {
+		o.BackfillTimeout = defaultBackfillTimeout
 	}
 	return o
 }
@@ -137,11 +151,7 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 			// The backfill issues an RPC on the gateway connection, and this
 			// hook runs on the goroutine that reads that connection: the call
 			// would never be answered. It runs in its own goroutine instead.
-			go func() {
-				bctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-				defer cancel()
-				backfillActivity(bctx, ring, httpClient, wsClient)
-			}()
+			go runBackfill(ctx, opts.BackfillTimeout, ring, httpClient, wsClient)
 			slog.Info("tenant canary re-verified after reconnect", "tenant", cfg.TenantID)
 			return nil
 		},
@@ -161,7 +171,13 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 	slog.Info("tenant canary verified", "tenant", cfg.TenantID)
 
 	// Activity history (best-effort; live events are appended below).
-	backfillActivity(ctx, ring, httpClient, wsClient)
+	//
+	// The backfill waits for gateway RPC answers, so it runs under a
+	// deadline: a gateway that accepts the connection but never answers
+	// must not keep the HTTP server from coming up. A backfill that fails
+	// or times out is not fatal, the feed starts empty and the live events
+	// still land.
+	runBackfill(ctx, opts.BackfillTimeout, ring, httpClient, wsClient)
 
 	reconciler := live.NewReconciler(state, httpClient, hub)
 
@@ -208,6 +224,22 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 
 func slogError(msg string) error {
 	return fmt.Errorf("%s", msg)
+}
+
+// runBackfill runs the activity backfill under a deadline.
+//
+// The backfill waits for gateway RPC answers, so a gateway that accepts the
+// connection but never answers would hold the caller forever. The deadline
+// releases it. The failure is observable (a warning is logged) but not fatal:
+// the feed keeps whatever it already has, the live events still land, and
+// the service keeps serving.
+func runBackfill(ctx context.Context, timeout time.Duration, ring *activity.RingBuffer, httpClient *goclaw.HTTPClient, wsClient *goclaw.Client) {
+	bctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	backfillActivity(bctx, ring, httpClient, wsClient)
+	if errors.Is(bctx.Err(), context.DeadlineExceeded) {
+		slog.Warn("activity backfill timed out", "timeout", timeout)
+	}
 }
 
 // backfillActivity loads the gateway activity history into the feed: the

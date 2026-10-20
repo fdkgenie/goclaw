@@ -60,6 +60,10 @@ type Config struct {
 	// with. Those methods get an error response (ok=false) instead of a
 	// payload.
 	RPCErrors map[string]string
+	// SilentRPCMethods lists the RPC methods the fake never answers. The
+	// request is recorded but no response frame is written, simulating a
+	// gateway that accepts the connection and then stays silent.
+	SilentRPCMethods []string
 	// Agents returned by GET /v1/agents.
 	Agents []AgentData
 	// TracesPages pages returned by GET /v1/traces (paginated by offset/limit).
@@ -469,6 +473,11 @@ func (f *FakeGoClaw) handleRPC(conn *websocket.Conn, req *protocol.RequestFrame)
 			f.writeMu.Unlock()
 			return
 		}
+		if f.isSilent(req.Method) {
+			// The gateway accepted the request and stays silent: no response
+			// frame is written, so the caller waits until its deadline.
+			return
+		}
 		payload := map[string]any{"ok": true}
 		if f.cfg.RPCHandler != nil {
 			if mock, ok := f.cfg.RPCHandler(req.Method, req.Params); ok {
@@ -483,6 +492,18 @@ func (f *FakeGoClaw) handleRPC(conn *websocket.Conn, req *protocol.RequestFrame)
 		_ = conn.WriteJSON(protocol.NewOKResponse(req.ID, payload))
 		f.writeMu.Unlock()
 	}
+}
+
+// isSilent reports whether the fake must not answer the given RPC method.
+func (f *FakeGoClaw) isSilent(method string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, m := range f.cfg.SilentRPCMethods {
+		if m == method {
+			return true
+		}
+	}
+	return false
 }
 
 func fmtScan(s string, out *int) {
