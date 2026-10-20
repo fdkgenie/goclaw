@@ -17,7 +17,7 @@ func TestHTTPClientInjectsHeaders(t *testing.T) {
 		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "Agent 1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "a1", DisplayName: "Agent 1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
 	})
 	c := NewHTTPClient(f.URL(), "ak", tenantID.String(), 0)
@@ -73,14 +73,37 @@ func TestHTTPClientUnmarshalsResponse(t *testing.T) {
 	})
 	c := NewHTTPClient(f.URL(), "ak", tenantID.String(), 0)
 
+	// The gateway requires a time window on the usage-events endpoints.
 	var out struct {
-		CostUSD float64 `json:"cost_usd"`
+		Summary struct {
+			CostUSD float64 `json:"cost_usd"`
+		} `json:"summary"`
 	}
-	if err := c.Get(context.Background(), "/v1/usage/events/summary", &out); err != nil {
+	path := "/v1/usage/events/summary?from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z"
+	if err := c.Get(context.Background(), path, &out); err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	if out.CostUSD != 123.45 {
-		t.Errorf("cost_usd = %f, want 123.45", out.CostUSD)
+	if out.Summary.CostUSD != 123.45 {
+		t.Errorf("cost_usd = %f, want 123.45", out.Summary.CostUSD)
+	}
+}
+
+// TestHTTPClientUsageEventsRequireWindow proves the dashboard cannot query
+// the usage-events endpoints without an explicit time window: the gateway
+// answers 400 and the client surfaces the error.
+func TestHTTPClientUsageEventsRequireWindow(t *testing.T) {
+	tenantID := mustParseUUIDTest(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: RequiredCapabilities,
+	})
+	c := NewHTTPClient(f.URL(), "ak", tenantID.String(), 0)
+
+	var out any
+	if err := c.Get(context.Background(), "/v1/usage/events/summary", &out); err == nil {
+		t.Fatal("expected an error when the time window is missing")
 	}
 }
 

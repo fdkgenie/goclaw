@@ -25,7 +25,7 @@ func Overview(ctx context.Context, state *live.State, ws *goclaw.Client, httpCli
 		return err
 	})
 	g.Go(func() error {
-		cs, err := Cost(ctx, httpClient, resolve)
+		cs, err := Cost(ctx, httpClient, resolve, CostQuery{})
 		resCh <- result{cost: cs}
 		return err
 	})

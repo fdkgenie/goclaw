@@ -26,16 +26,16 @@ type TraceData struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// AgentData is a minimal agent record the fake returns for /v1/agents.
+// AgentData is a minimal agent record the fake returns for /v1/agents. The
+// field names mirror the gateway store.AgentData payload.
 type AgentData struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	TenantID  string `json:"tenant_id"`
-	TeamID    string `json:"team_id,omitempty"`
-	Role      string `json:"role"`
-	Model     string `json:"model"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updated_at"`
+	ID          string `json:"id"`
+	AgentKey    string `json:"agent_key"`
+	DisplayName string `json:"display_name,omitempty"`
+	TenantID    string `json:"tenant_id"`
+	Model       string `json:"model"`
+	Status      string `json:"status"`
+	AgentType   string `json:"agent_type,omitempty"`
 }
 
 // Config configures the fake GoClaw server.
@@ -51,13 +51,18 @@ type Config struct {
 	// RPCPayloads returns a canned payload for the given RPC method (keyed by
 	// method name). Used by aggregator tests.
 	RPCPayloads map[string]any
+	// RPCHandler builds the payload for an RPC method from the raw request
+	// params. It takes precedence over RPCPayloads when it returns ok.
+	RPCHandler func(method string, params json.RawMessage) (any, bool)
 	// Agents returned by GET /v1/agents.
 	Agents []AgentData
 	// TracesPages pages returned by GET /v1/traces (paginated by offset/limit).
 	TracesPages [][]TraceData
-	// UsageSummary returned by GET /v1/usage/events/summary.
+	// UsageSummary returned by GET /v1/usage/events/summary (the "summary"
+	// object of the response envelope).
 	UsageSummary map[string]any
-	// UsageBreakdown returned by GET /v1/usage/events/breakdown.
+	// UsageBreakdown returned by GET /v1/usage/events/breakdown (the "rows"
+	// of the response envelope).
 	UsageBreakdown []map[string]any
 	// Version advertised in connect response.
 	Version string
@@ -74,6 +79,7 @@ type FakeGoClaw struct {
 	conns   map[*websocket.Conn]bool
 
 	recordedHTTP     []http.Header
+	recordedRequests []string
 	recordedConnect  []connectParams
 	recordedRPC      []rpcCall
 	connectResponses int
@@ -170,6 +176,16 @@ func (f *FakeGoClaw) RecordedRPCCalls() []rpcCall {
 	return out
 }
 
+// RecordedRequests returns the request targets (path + query) of every HTTP
+// request the fake served.
+func (f *FakeGoClaw) RecordedRequests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.recordedRequests))
+	copy(out, f.recordedRequests)
+	return out
+}
+
 // SetAgents replaces the agents returned by GET /v1/agents (for tests that
 // change tenant state between reconnects).
 func (f *FakeGoClaw) SetAgents(agents []AgentData) {
@@ -217,6 +233,7 @@ func (f *FakeGoClaw) BroadcastEvent(event string, payload any) {
 func (f *FakeGoClaw) recordHeaders(r *http.Request) {
 	f.mu.Lock()
 	f.recordedHTTP = append(f.recordedHTTP, r.Header.Clone())
+	f.recordedRequests = append(f.recordedRequests, r.URL.RequestURI())
 	f.mu.Unlock()
 }
 
@@ -276,22 +293,61 @@ func (f *FakeGoClaw) handleTraces(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// requireUsageWindow mirrors the gateway usage-events filter parsing: both
+// from and to are required, must be RFC3339 and to must be after from.
+func requireUsageWindow(r *http.Request) error {
+	values := r.URL.Query()
+	fromRaw := values.Get("from")
+	toRaw := values.Get("to")
+	if fromRaw == "" || toRaw == "" {
+		return fmt.Errorf("from and to are required")
+	}
+	from, err := time.Parse(time.RFC3339, fromRaw)
+	if err != nil {
+		return fmt.Errorf("invalid from")
+	}
+	to, err := time.Parse(time.RFC3339, toRaw)
+	if err != nil {
+		return fmt.Errorf("invalid to")
+	}
+	if !to.After(from) {
+		return fmt.Errorf("to must be after from")
+	}
+	return nil
+}
+
 func (f *FakeGoClaw) handleUsageSummary(w http.ResponseWriter, r *http.Request) {
 	f.recordHeaders(r)
 	w.Header().Set("Content-Type", "application/json")
-	if f.cfg.UsageSummary == nil {
-		f.cfg.UsageSummary = map[string]any{"cost_usd": 0}
+	if err := requireUsageWindow(r); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
 	}
-	_ = json.NewEncoder(w).Encode(f.cfg.UsageSummary)
+	f.mu.Lock()
+	summary := f.cfg.UsageSummary
+	f.mu.Unlock()
+	if summary == nil {
+		summary = map[string]any{"cost_usd": 0}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"summary": summary})
 }
 
 func (f *FakeGoClaw) handleUsageBreakdown(w http.ResponseWriter, r *http.Request) {
 	f.recordHeaders(r)
 	w.Header().Set("Content-Type", "application/json")
-	if f.cfg.UsageBreakdown == nil {
-		f.cfg.UsageBreakdown = []map[string]any{}
+	if err := requireUsageWindow(r); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"rows": f.cfg.UsageBreakdown})
+	f.mu.Lock()
+	rows := f.cfg.UsageBreakdown
+	f.mu.Unlock()
+	if rows == nil {
+		rows = []map[string]any{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"rows": rows})
 }
 
 func (f *FakeGoClaw) handleUsageTimeseries(w http.ResponseWriter, r *http.Request) {
@@ -386,7 +442,11 @@ func (f *FakeGoClaw) handleRPC(conn *websocket.Conn, req *protocol.RequestFrame)
 		f.recordedRPC = append(f.recordedRPC, rpcCall{Method: req.Method, Params: req.Params})
 		f.mu.Unlock()
 		payload := map[string]any{"ok": true}
-		if f.cfg.RPCPayloads != nil {
+		if f.cfg.RPCHandler != nil {
+			if mock, ok := f.cfg.RPCHandler(req.Method, req.Params); ok {
+				payload = mock.(map[string]any)
+			}
+		} else if f.cfg.RPCPayloads != nil {
 			if mock, ok := f.cfg.RPCPayloads[req.Method]; ok {
 				payload = mock.(map[string]any)
 			}

@@ -4,8 +4,10 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -152,12 +154,31 @@ func (r *Router) handleOrgChart(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleCost(w http.ResponseWriter, req *http.Request) {
-	cs, err := aggregate.Cost(req.Context(), r.http, nil)
+	q := aggregate.CostQuery{}
+	if teamID := strings.TrimSpace(req.URL.Query().Get("team_id")); teamID != "" {
+		q.TeamID = teamID
+	}
+	cs, err := aggregate.Cost(req.Context(), r.http, r.teamResolver(req.Context()), q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	r.writeJSON(w, cs)
+}
+
+// teamResolver maps a team id to its display name for the cost breakdown.
+// It is best effort: when the gateway team list is unavailable the rows keep
+// their raw team id.
+func (r *Router) teamResolver(ctx context.Context) aggregate.TeamResolver {
+	if r.ws == nil {
+		return nil
+	}
+	teams, err := aggregate.ListTeams(ctx, r.ws)
+	if err != nil {
+		slog.Warn("dashboard team list failed", "err", err)
+		return nil
+	}
+	return aggregate.TeamResolverFor(teams)
 }
 
 func (r *Router) handleActivity(w http.ResponseWriter, req *http.Request) {

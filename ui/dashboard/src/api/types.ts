@@ -20,10 +20,13 @@ export interface CostBreakdownRow {
   key: string;
   label?: string;
   cost_usd: number;
+  calls: number;
+  total_tokens: number;
 }
 
 export interface CostSummary {
   summary_usd: number;
+  calls: number;
   rows: CostBreakdownRow[];
   other?: CostBreakdownRow;
 }
@@ -51,7 +54,7 @@ export interface LiveKPI {
 
 export interface OrgChartNode {
   id: string;
-  type: "team" | "lead" | "member";
+  type: "team" | "lead" | "member" | "agent";
   label: string;
   team_id?: string;
 }
@@ -59,6 +62,7 @@ export interface OrgChartNode {
 export interface OrgChartEdge {
   from: string;
   to: string;
+  kind?: "hierarchy" | "delegation";
 }
 
 export interface OrgChartDAG {

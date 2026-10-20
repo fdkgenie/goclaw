@@ -38,7 +38,9 @@ func TaskKPIs(ctx context.Context, client *goclaw.Client, teams []TeamRef) (*Tas
 			InReview: TaskKPI{Exact: true},
 		}
 		for _, status := range []string{"active", "in_review"} {
-			params := map[string]any{"team_id": team.ID, "status": status, "limit": 200}
+			// The gateway param is camelCase "teamId"; "team_id" is silently
+			// ignored and the handler answers "teamId is required".
+			params := map[string]any{"teamId": team.ID, "status": status}
 			resp, err := client.Call(ctx, "teams.tasks.list", params)
 			if err != nil {
 				return nil, fmt.Errorf("teams.tasks.list team=%s status=%s: %w", team.ID, status, err)

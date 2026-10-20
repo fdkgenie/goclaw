@@ -73,7 +73,7 @@ func TestFakeGoClawHTTPAndWS(t *testing.T) {
 			protocol.CapTeamsTasksListHasMore,
 		},
 		Agents: []AgentData{
-			{ID: "a1", Name: "Agent 1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "agent-1", DisplayName: "Agent 1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
 		Version: "1.0.0",
 	})

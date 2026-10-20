@@ -174,7 +174,7 @@ func TestWSCall(t *testing.T) {
 		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "Agent 1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "a1", DisplayName: "Agent 1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
 	})
 	c := connectClient(t, f, tenantID)

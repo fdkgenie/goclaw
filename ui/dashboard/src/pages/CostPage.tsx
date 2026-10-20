@@ -24,7 +24,7 @@ export const CostPage = (): React.ReactNode => {
     <div className="card">
       <div className="flex justify-between items-end mb-4">
         <div>
-          <div className="text-slate-500 text-xs uppercase tracking-wider">{t("overview.cost")}</div>
+          <div className="text-slate-500 text-xs uppercase tracking-wider">{t("cost.title")}</div>
           <div className="text-2xl font-bold">${cost.summary_usd.toFixed(2)}</div>
         </div>
         <div className="text-sm text-slate-500">{t("cost.top_n")}</div>
@@ -34,6 +34,7 @@ export const CostPage = (): React.ReactNode => {
           <thead>
             <tr>
               <th className="pb-2 text-slate-500 font-medium">{t("cost.group")}</th>
+              <th className="pb-2 text-slate-500 font-medium text-right">{t("cost.calls")}</th>
               <th className="pb-2 text-slate-500 font-medium text-right">{t("cost.cost_usd")}</th>
             </tr>
           </thead>
@@ -41,12 +42,18 @@ export const CostPage = (): React.ReactNode => {
             {cost.rows.map((r) => (
               <tr key={r.key || "personal"} className="border-t border-slate-100">
                 <td className="py-2">{r.label || r.key}</td>
+                <td className="py-2 text-right" data-testid="calls-cell">
+                  {r.calls}
+                </td>
                 <td className="py-2 text-right">${r.cost_usd.toFixed(2)}</td>
               </tr>
             ))}
             {showOther && cost.other && (
               <tr className="border-t border-slate-200 font-medium" data-testid="other-row">
                 <td className="py-2">{cost.other.label || t("cost.other")}</td>
+                <td className="py-2 text-right" data-testid="calls-cell">
+                  {cost.other.calls}
+                </td>
                 <td className="py-2 text-right">${cost.other.cost_usd.toFixed(2)}</td>
               </tr>
             )}

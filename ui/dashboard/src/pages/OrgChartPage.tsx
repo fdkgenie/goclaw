@@ -66,6 +66,9 @@ export const OrgChartPage = (): React.ReactNode => {
   const count = (type: OrgChartNode["type"]) =>
     layout.nodes.filter((n) => n.type === type).length;
 
+  const delegationLinks = layout.edges.filter((e) => e.kind === "delegation").length;
+  const hierarchyEdges = layout.edges.length - delegationLinks;
+
   return (
     <div className="card">
       <div className="flex flex-wrap gap-4 mb-4 text-sm">
@@ -79,7 +82,11 @@ export const OrgChartPage = (): React.ReactNode => {
           <span className="font-medium">{t("orgchart.members")}</span> {count("member")}
         </span>
         <span>
-          <span className="font-medium">{t("orgchart.links")}</span> {layout.edges.length}
+          <span className="font-medium">{t("orgchart.links")}</span> {hierarchyEdges}
+        </span>
+        <span>
+          <span className="font-medium">{t("orgchart.delegation_links")}</span>{" "}
+          {delegationLinks}
         </span>
       </div>
 
@@ -110,16 +117,19 @@ export const OrgChartPage = (): React.ReactNode => {
               const from = layout.positions.get(edge.from);
               const to = layout.positions.get(edge.to);
               if (!from || !to) return null;
+              const delegation = edge.kind === "delegation";
               return (
                 <line
                   key={`${edge.from}-${edge.to}-${i}`}
                   data-edge-from={edge.from}
                   data-edge-to={edge.to}
+                  data-edge-kind={edge.kind ?? "hierarchy"}
                   x1={from.x}
                   y1={from.y + NODE_HEIGHT / 2}
                   x2={to.x}
                   y2={to.y - NODE_HEIGHT / 2}
                   stroke="currentColor"
+                  strokeDasharray={delegation ? "6 4" : undefined}
                   className="text-slate-400"
                   markerEnd="url(#orgchart-arrow)"
                 />
@@ -133,7 +143,9 @@ export const OrgChartPage = (): React.ReactNode => {
                   ? "fill-blue-50 stroke-blue-400"
                   : node.type === "lead"
                     ? "fill-emerald-50 stroke-emerald-400"
-                    : "fill-white stroke-slate-300";
+                    : node.type === "agent"
+                      ? "fill-amber-50 stroke-amber-400"
+                      : "fill-white stroke-slate-300";
               return (
                 <g key={node.id} data-node-id={node.id} data-node-type={node.type}>
                   <rect

@@ -41,18 +41,22 @@ describe("CostPage", () => {
   it("renders the fetched summary and breakdown rows", async () => {
     mockCost({
       summary_usd: 130,
-      rows: [{ key: "team-a", cost_usd: 70 }, { key: "team-b", cost_usd: 50 }],
-      other: { key: "other", label: "Other", cost_usd: 10 },
+      calls: 12,
+      rows: [
+        { key: "team-a", cost_usd: 70, calls: 7, total_tokens: 700 },
+        { key: "team-b", cost_usd: 50, calls: 4, total_tokens: 400 },
+      ],
+      other: { key: "other", label: "Other", cost_usd: 10, calls: 1, total_tokens: 100 },
     });
     await render();
-    expect(container.textContent).toContain("Burn Rate");
+    expect(container.textContent).toContain("Cost (last 24h)");
     expect(container.textContent).toContain("$130.00");
     expect(container.textContent).toContain("$70.00");
-    expect(container.textContent).toContain("Top N by calls");
+    expect(container.textContent).toContain("Top teams by calls");
   });
 
   it("wraps table in overflow-x-auto with min width", async () => {
-    mockCost({ summary_usd: 0, rows: [] });
+    mockCost({ summary_usd: 0, calls: 0, rows: [] });
     await render();
     const wrapper = container.querySelector(".overflow-x-auto");
     expect(wrapper).not.toBeNull();
@@ -64,8 +68,12 @@ describe("CostPage", () => {
   it("renders the Other row when the API returns a remainder", async () => {
     mockCost({
       summary_usd: 130,
-      rows: [{ key: "team-a", cost_usd: 70 }, { key: "team-b", cost_usd: 50 }],
-      other: { key: "other", label: "Other", cost_usd: 10 },
+      calls: 12,
+      rows: [
+        { key: "team-a", cost_usd: 70, calls: 7, total_tokens: 700 },
+        { key: "team-b", cost_usd: 50, calls: 4, total_tokens: 400 },
+      ],
+      other: { key: "other", label: "Other", cost_usd: 10, calls: 1, total_tokens: 100 },
     });
     await render();
     expect(container.querySelector('[data-testid="other-row"]')).not.toBeNull();
@@ -73,8 +81,42 @@ describe("CostPage", () => {
   });
 
   it("hides the Other row when there is no remainder", async () => {
-    mockCost({ summary_usd: 50, rows: [{ key: "team-a", cost_usd: 50 }] });
+    mockCost({
+      summary_usd: 50,
+      calls: 5,
+      rows: [{ key: "team-a", cost_usd: 50, calls: 5, total_tokens: 500 }],
+    });
     await render();
     expect(container.querySelector('[data-testid="other-row"]')).toBeNull();
+  });
+
+  it("renders the call count of every breakdown row", async () => {
+    mockCost({
+      summary_usd: 120,
+      calls: 11,
+      rows: [
+        { key: "team-a", label: "Team A", cost_usd: 70, calls: 7, total_tokens: 700 },
+        { key: "team-b", label: "Team B", cost_usd: 50, calls: 4, total_tokens: 400 },
+      ],
+    });
+    await render();
+    const cells = Array.from(container.querySelectorAll('[data-testid="calls-cell"]')).map(
+      (c) => c.textContent,
+    );
+    expect(cells).toEqual(["7", "4"]);
+    expect(container.textContent).toContain("Calls");
+  });
+
+  it("prefers the resolved team label over the raw team id", async () => {
+    mockCost({
+      summary_usd: 70,
+      calls: 7,
+      rows: [
+        { key: "6ba7b810-9dad-11d1-80b4-00c04fd430c8", label: "Platform", cost_usd: 70, calls: 7, total_tokens: 700 },
+      ],
+    });
+    await render();
+    expect(container.textContent).toContain("Platform");
+    expect(container.textContent).not.toContain("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
   });
 });

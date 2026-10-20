@@ -73,13 +73,12 @@ func Reset() { defaultBreaker.Reset() }
 
 // agentEntry is a single agent returned by /v1/agents.
 type agentEntry struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	TenantID  string `json:"tenant_id"`
-	Role      string `json:"role"`
-	Model     string `json:"model"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updated_at"`
+	ID          string `json:"id"`
+	AgentKey    string `json:"agent_key"`
+	DisplayName string `json:"display_name"`
+	TenantID    string `json:"tenant_id"`
+	Model       string `json:"model"`
+	Status      string `json:"status"`
 }
 
 // agentsResponse is the /v1/agents response envelope.

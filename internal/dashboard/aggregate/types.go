@@ -27,22 +27,33 @@ type TaskKPIResult struct {
 
 // CostBreakdownRow is a single row in a cost breakdown.
 type CostBreakdownRow struct {
-	Key     string  `json:"key"`
-	Label   string  `json:"label,omitempty"`
-	CostUSD float64 `json:"cost_usd"`
+	Key         string  `json:"key"`
+	Label       string  `json:"label,omitempty"`
+	CostUSD     float64 `json:"cost_usd"`
+	Calls       int     `json:"calls"`
+	TotalTokens int64   `json:"total_tokens"`
 }
 
 // CostSummary is a cost breakdown with an optional "Other" row.
 type CostSummary struct {
 	SummaryUSD float64            `json:"summary_usd"`
+	Calls      int                `json:"calls"`
 	Rows       []CostBreakdownRow `json:"rows"`
 	Other      *CostBreakdownRow  `json:"other,omitempty"`
 }
 
+// Org chart edge kinds.
+const (
+	// EdgeHierarchy is a team -> lead or lead -> member edge.
+	EdgeHierarchy = "hierarchy"
+	// EdgeDelegation is an agent -> agent delegation edge.
+	EdgeDelegation = "delegation"
+)
+
 // OrgChartNode is a node in the team org-chart DAG.
 type OrgChartNode struct {
 	ID     string `json:"id"`
-	Type   string `json:"type"` // team, lead, member
+	Type   string `json:"type"` // team, lead, member, agent
 	Label  string `json:"label"`
 	TeamID string `json:"team_id,omitempty"`
 }
@@ -51,6 +62,7 @@ type OrgChartNode struct {
 type OrgChartEdge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	Kind string `json:"kind,omitempty"` // hierarchy, delegation
 }
 
 // OrgChartDAG is the team -> lead -> members org chart with agent_links edges.

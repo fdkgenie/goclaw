@@ -29,8 +29,8 @@ func TestCanaryAllAgentsMatch(t *testing.T) {
 		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "A1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
-			{ID: "a2", Name: "A2", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
+			{ID: "a2", AgentKey: "a2", DisplayName: "A2", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
 	})
 	c := NewHTTPClient(f.URL(), "ak", tenantID.String(), 0)
@@ -55,8 +55,8 @@ func TestCanaryAnyAgentMismatch(t *testing.T) {
 		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "A1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
-			{ID: "a2", Name: "A2", TenantID: other.String(), Role: "member", Model: "gpt-4", Status: "active"}, // mismatch
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
+			{ID: "a2", AgentKey: "a2", DisplayName: "A2", TenantID: other.String(), Model: "gpt-4", Status: "active"}, // mismatch
 		},
 	})
 	c := NewHTTPClient(f.URL(), "ak", tenantID.String(), 0)
@@ -125,7 +125,7 @@ func TestReconnectCanaryFailClosedThenRecovers(t *testing.T) {
 	t.Cleanup(Reset)
 
 	agents := []testutil.AgentData{
-		{ID: "a1", Name: "A1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+		{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 	}
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
 		Role:         "admin",
@@ -164,7 +164,7 @@ func TestReconnectCanaryFailClosedThenRecovers(t *testing.T) {
 
 	// Reconnect canary must fail while the gateway reports another tenant.
 	f.SetAgents([]testutil.AgentData{
-		{ID: "a2", Name: "A2", TenantID: other.String(), Role: "member", Model: "gpt-4", Status: "active"},
+		{ID: "a2", AgentKey: "a2", DisplayName: "A2", TenantID: other.String(), Model: "gpt-4", Status: "active"},
 	})
 	forceDisconnect(client)
 	waitFor(t, 5*time.Second, "degraded after disconnect", func() bool { return IsDegraded() })
@@ -198,7 +198,7 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "A1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
 	})
 
@@ -260,7 +260,7 @@ func TestCanaryLogsTenantMismatch(t *testing.T) {
 		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "A1", TenantID: other.String(), Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: other.String(), Model: "gpt-4", Status: "active"},
 		},
 	})
 	c := NewHTTPClient(f.URL(), "ak", tenantID.String(), 0)

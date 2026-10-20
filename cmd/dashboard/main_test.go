@@ -44,7 +44,7 @@ func TestMainIntegrationSmoke(t *testing.T) {
 			{"key": "team-a", "cost_usd": 100.0},
 		},
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "A1", TenantID: tenantID.String(), TeamID: "team-a", Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
 	})
 
@@ -100,6 +100,7 @@ func TestMainIntegrationSmoke(t *testing.T) {
 	loginBody := strings.NewReader(`{"password":"pw"}`)
 	loginReq, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:19797/api/login", loginBody)
 	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("Origin", "http://127.0.0.1:19797")
 	loginResp, err := client.Do(loginReq)
 	if err != nil {
 		t.Fatalf("login request: %v", err)
@@ -159,7 +160,7 @@ func TestDisconnectFailsClosedUntilCanaryReverifies(t *testing.T) {
 	otherTenant := uuid.MustParse("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
 
 	goodAgents := []testutil.AgentData{
-		{ID: "a1", Name: "A1", TenantID: tenantID.String(), TeamID: "team-a", Role: "member", Model: "gpt-4", Status: "active"},
+		{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 	}
 
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
@@ -222,7 +223,7 @@ func TestDisconnectFailsClosedUntilCanaryReverifies(t *testing.T) {
 	// Break the tenant binding, then force the gateway connection to drop.
 	// The reconnect canary must fail, so the service stays fail-closed.
 	f.SetAgents([]testutil.AgentData{
-		{ID: "a2", Name: "A2", TenantID: otherTenant.String(), Role: "member", Model: "gpt-4", Status: "active"},
+		{ID: "a2", AgentKey: "a2", DisplayName: "A2", TenantID: otherTenant.String(), Model: "gpt-4", Status: "active"},
 	})
 	f.DropConnections()
 
@@ -263,6 +264,7 @@ func login(t *testing.T, client *http.Client, base string) *http.Cookie {
 		t.Fatalf("login request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", strings.TrimSuffix(base, "/"))
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("login: %v", err)
@@ -338,7 +340,7 @@ func TestGatewayEventReachesSSESubscriber(t *testing.T) {
 		IsOwner:      false,
 		Capabilities: goclaw.RequiredCapabilities,
 		Agents: []testutil.AgentData{
-			{ID: "a1", Name: "A1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
 	})
 
