@@ -31,6 +31,7 @@ type AgentData struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	TenantID  string `json:"tenant_id"`
+	TeamID    string `json:"team_id,omitempty"`
 	Role      string `json:"role"`
 	Model     string `json:"model"`
 	Status    string `json:"status"`
@@ -47,6 +48,9 @@ type Config struct {
 	IsOwner bool
 	// Capabilities advertised in connect response.
 	Capabilities []string
+	// RPCPayloads returns a canned payload for the given RPC method (keyed by
+	// method name). Used by aggregator tests.
+	RPCPayloads map[string]any
 	// Agents returned by GET /v1/agents.
 	Agents []AgentData
 	// TracesPages pages returned by GET /v1/traces (paginated by offset/limit).
@@ -64,10 +68,10 @@ type FakeGoClaw struct {
 	server   *httptest.Server
 	upgrader websocket.Upgrader
 
-	cfg    Config
-	mu     sync.Mutex
+	cfg     Config
+	mu      sync.Mutex
 	writeMu sync.Mutex // serializes writes to any WS conn (gorilla not safe for concurrent writes)
-	conns  map[*websocket.Conn]bool
+	conns   map[*websocket.Conn]bool
 
 	recordedHTTP     []http.Header
 	recordedConnect  []connectParams
@@ -75,21 +79,21 @@ type FakeGoClaw struct {
 }
 
 type connectParams struct {
-	Token     string `json:"token"`
-	TenantID  string `json:"tenant_id"`
-	UserID    string `json:"user_id"`
+	Token      string `json:"token"`
+	TenantID   string `json:"tenant_id"`
+	UserID     string `json:"user_id"`
 	RemoteAddr string
 }
 
 // NewFakeGoClaw starts the fake server. t.Cleanup is used to close it.
 func NewFakeGoClaw(t interface{ Cleanup(func()) }, cfg Config) *FakeGoClaw {
 	f := &FakeGoClaw{
-		cfg:     cfg,
-		conns:   make(map[*websocket.Conn]bool),
+		cfg:   cfg,
+		conns: make(map[*websocket.Conn]bool),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(r *http.Request) bool { return true },
+			CheckOrigin:     func(r *http.Request) bool { return true },
 		},
 	}
 	mux := http.NewServeMux()
@@ -320,12 +324,12 @@ func (f *FakeGoClaw) handleRPC(conn *websocket.Conn, req *protocol.RequestFrame)
 			tenantID = uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 		}
 		payload := map[string]any{
-			"protocol":    protocol.ProtocolVersion,
-			"role":        role,
-			"user_id":     cp.UserID,
-			"tenant_id":   tenantID.String(),
-			"is_owner":    f.cfg.IsOwner,
-			"edition":     f.cfg.Version,
+			"protocol":  protocol.ProtocolVersion,
+			"role":      role,
+			"user_id":   cp.UserID,
+			"tenant_id": tenantID.String(),
+			"is_owner":  f.cfg.IsOwner,
+			"edition":   f.cfg.Version,
 			"server": map[string]any{
 				"name":         "goclaw",
 				"version":      f.cfg.Version,
@@ -336,8 +340,14 @@ func (f *FakeGoClaw) handleRPC(conn *websocket.Conn, req *protocol.RequestFrame)
 		_ = conn.WriteJSON(protocol.NewOKResponse(req.ID, payload))
 		f.writeMu.Unlock()
 	default:
+		payload := map[string]any{"ok": true}
+		if f.cfg.RPCPayloads != nil {
+			if mock, ok := f.cfg.RPCPayloads[req.Method]; ok {
+				payload = mock.(map[string]any)
+			}
+		}
 		f.writeMu.Lock()
-		_ = conn.WriteJSON(protocol.NewOKResponse(req.ID, map[string]any{"ok": true}))
+		_ = conn.WriteJSON(protocol.NewOKResponse(req.ID, payload))
 		f.writeMu.Unlock()
 	}
 }
