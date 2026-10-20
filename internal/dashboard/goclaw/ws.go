@@ -20,6 +20,12 @@ const (
 	readDeadline        = 60 * time.Second
 	writeDeadline       = 15 * time.Second
 	dialTimeout         = 10 * time.Second
+
+	// wildcardSubscription is the subscription key that receives every event
+	// frame. The dashboard uses it for the event families it consumes by
+	// prefix (team.task.*), so a new gateway event of a family is picked up
+	// without touching the subscription list.
+	wildcardSubscription = "*"
 )
 
 // Client is a long-lived WebSocket client to the GoClaw Gateway. It performs
@@ -396,6 +402,12 @@ func (c *Client) Subscribe(event string, ch chan *EventFrame) func() {
 	}
 }
 
+// SubscribeAll registers a channel to receive every event frame, whatever its
+// name. The subscriber filters the event families it consumes.
+func (c *Client) SubscribeAll(ch chan *EventFrame) func() {
+	return c.Subscribe(wildcardSubscription, ch)
+}
+
 // ConnectResponse returns the last validated connect response, or nil.
 func (c *Client) ConnectResponse() *ConnectResponse {
 	c.connectMu.RLock()
@@ -501,7 +513,9 @@ func (c *Client) deliverResponse(res *ResponseFrame) {
 
 func (c *Client) deliverEvent(evt *EventFrame) {
 	c.subsMu.Lock()
-	lst := c.subs[evt.Event]
+	lst := make([]chan *EventFrame, 0, len(c.subs[evt.Event])+len(c.subs[wildcardSubscription]))
+	lst = append(lst, c.subs[evt.Event]...)
+	lst = append(lst, c.subs[wildcardSubscription]...)
 	c.subsMu.Unlock()
 	for _, ch := range lst {
 		select {

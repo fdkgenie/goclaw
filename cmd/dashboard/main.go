@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/time/rate"
 
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/activity"
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/aggregate"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/config"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/live"
@@ -85,7 +88,20 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 	httpClient := goclaw.NewHTTPClient(cfg.GoClawAPIURL, cfg.GoClawAPIKey, cfg.TenantID.String(), 15*time.Second)
 	state := live.NewState()
 	hub := live.NewHub(state)
-	wsClient := goclaw.NewClient(goclaw.Config{
+
+	// Activity feed: the history is loaded from the gateway, the live events
+	// are appended by the gateway event pump.
+	ring := activity.NewRingBuffer()
+
+	// The window the feed lost while the gateway connection was down. The
+	// gap marker is inserted when the connection is restored.
+	var gapMu sync.Mutex
+	var disconnectedAt time.Time
+
+	// wsClient is declared before its constructor: the reconnect hook below
+	// refers to it.
+	var wsClient *goclaw.Client
+	wsClient = goclaw.NewClient(goclaw.Config{
 		WSURL:        cfg.GoClawWSURL,
 		APIToken:     cfg.GoClawAPIKey,
 		TenantID:     cfg.TenantID,
@@ -96,6 +112,9 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 			// The tenant binding is no longer verified: fail closed until the
 			// reconnect canary passes.
 			slog.Warn("dashboard websocket disconnected", "err", err)
+			gapMu.Lock()
+			disconnectedAt = time.Now()
+			gapMu.Unlock()
 			goclaw.SetDegraded("gateway disconnected: " + err.Error())
 			hub.MarkDegradedAndPublish(err.Error())
 		},
@@ -106,6 +125,23 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 				return err
 			}
 			hub.MarkRecoveredAndPublish()
+			// The feed lost the window the gateway was down: mark the gap and
+			// reload the history that happened meanwhile.
+			gapMu.Lock()
+			since := disconnectedAt
+			disconnectedAt = time.Time{}
+			gapMu.Unlock()
+			if !since.IsZero() {
+				ring.InsertGapMarker(since)
+			}
+			// The backfill issues an RPC on the gateway connection, and this
+			// hook runs on the goroutine that reads that connection: the call
+			// would never be answered. It runs in its own goroutine instead.
+			go func() {
+				bctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				defer cancel()
+				backfillActivity(bctx, ring, httpClient, wsClient)
+			}()
 			slog.Info("tenant canary re-verified after reconnect", "tenant", cfg.TenantID)
 			return nil
 		},
@@ -125,10 +161,7 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 	slog.Info("tenant canary verified", "tenant", cfg.TenantID)
 
 	// Activity history (best-effort; live events are appended below).
-	ring := activity.NewRingBuffer()
-	if err := ring.Backfill(ctx, httpClient); err != nil {
-		slog.Warn("activity backfill failed", "err", err)
-	}
+	backfillActivity(ctx, ring, httpClient, wsClient)
 
 	reconciler := live.NewReconciler(state, httpClient, hub)
 
@@ -177,17 +210,43 @@ func slogError(msg string) error {
 	return fmt.Errorf("%s", msg)
 }
 
+// backfillActivity loads the gateway activity history into the feed: the
+// audit log over HTTP and the team task events over the RPC. Both are best
+// effort: a failure is logged and the feed keeps whatever it already has.
+func backfillActivity(ctx context.Context, ring *activity.RingBuffer, httpClient *goclaw.HTTPClient, wsClient *goclaw.Client) {
+	if err := ring.Backfill(ctx, httpClient); err != nil {
+		slog.Warn("activity backfill failed", "err", err)
+	}
+	teams, err := aggregate.ListTeams(ctx, wsClient)
+	if err != nil {
+		slog.Warn("activity team backfill failed", "err", err)
+		return
+	}
+	teamIDs := make([]string, 0, len(teams))
+	for _, t := range teams {
+		teamIDs = append(teamIDs, t.ID)
+	}
+	if err := ring.BackfillTeams(ctx, wsClient, teamIDs); err != nil {
+		slog.Warn("activity team backfill failed", "err", err)
+	}
+}
+
 // pumpGatewayEvents forwards gateway WebSocket events into the live pipeline.
 //
 // Agent lifecycle events are appended to the activity ring and applied to the
 // live state through the reconciler, which publishes an SSE delta to every
-// subscriber. Trace status events only update the live state. The pump runs
-// until ctx is cancelled.
+// subscriber. Trace status events only update the live state. The team task
+// events are appended to the activity ring. The pump runs until ctx is
+// cancelled.
 func pumpGatewayEvents(ctx context.Context, wsClient *goclaw.Client, reconciler *live.Reconciler, ring *activity.RingBuffer) {
 	agentEvents := make(chan *goclaw.EventFrame, 256)
 	traceEvents := make(chan *goclaw.EventFrame, 256)
+	taskEvents := make(chan *goclaw.EventFrame, 256)
 	wsClient.Subscribe(protocol.EventAgent, agentEvents)
 	wsClient.Subscribe(protocol.EventTraceStatusChanged, traceEvents)
+	// The team task events are a whole family (team.task.*): the wildcard
+	// subscription keeps the feed complete when the gateway adds one.
+	wsClient.SubscribeAll(taskEvents)
 
 	go func() {
 		for {
@@ -217,6 +276,18 @@ func pumpGatewayEvents(ctx context.Context, wsClient *goclaw.Client, reconciler 
 					continue
 				}
 				reconciler.HandleEvent(evt)
+			case frame := <-taskEvents:
+				if frame == nil || !strings.HasPrefix(frame.Event, "team.task.") {
+					continue
+				}
+				if ring == nil {
+					continue
+				}
+				it, ok := activity.FromTeamTaskEvent(frame.Event, frame.Payload)
+				if !ok {
+					continue
+				}
+				ring.Add(it)
 			}
 		}
 	}()

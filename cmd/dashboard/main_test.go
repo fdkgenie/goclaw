@@ -43,6 +43,17 @@ func TestMainIntegrationSmoke(t *testing.T) {
 		UsageBreakdown: []map[string]any{
 			{"key": "team-a", "cost_usd": 100.0},
 		},
+		ActivityLogs: []map[string]any{
+			{
+				"id":          "log-1",
+				"actor_type":  "user",
+				"actor_id":    "operator",
+				"action":      "agent.created",
+				"entity_type": "agent",
+				"entity_id":   "a1",
+				"created_at":  "2026-10-19T10:00:00Z",
+			},
+		},
 		Agents: []testutil.AgentData{
 			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
 		},
@@ -137,6 +148,13 @@ func TestMainIntegrationSmoke(t *testing.T) {
 	if ov["task_kpi"] == nil {
 		t.Fatal("expected task_kpi in overview")
 	}
+
+	// The audit history of the gateway must reach the activity feed. The
+	// gateway returns the rows under "logs"; the dashboard used to look for
+	// "items" and dropped the whole history.
+	waitForActivityItem(t, client, "http://127.0.0.1:19797", cookie, 10*time.Second, func(item map[string]any) bool {
+		return item["id"] == "log-1"
+	})
 
 	// Cancel triggers graceful shutdown.
 	cancel()
@@ -244,6 +262,9 @@ func TestDisconnectFailsClosedUntilCanaryReverifies(t *testing.T) {
 		return code == http.StatusOK
 	}, "overview never recovered after the canary re-verified")
 
+	// The feed lost the window the gateway was down: it must show the gap.
+	waitForActivityGap(t, client, base, cookie, 10*time.Second)
+
 	// Graceful shutdown.
 	cancel()
 	select {
@@ -289,6 +310,69 @@ func getStatus(t *testing.T, client *http.Client, url string, cookie *http.Cooki
 		t.Fatalf("GET %s: %v", url, err)
 	}
 	return code
+}
+
+// waitForActivityItem polls the activity feed until an item matches the
+// predicate.
+func waitForActivityItem(t *testing.T, client *http.Client, base string, cookie *http.Cookie, timeout time.Duration, match func(map[string]any) bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequest(http.MethodGet, base+"/api/activity", nil)
+		if err == nil {
+			req.AddCookie(cookie)
+			resp, err := client.Do(req)
+			if err == nil {
+				var payload struct {
+					Items []map[string]any `json:"items"`
+				}
+				decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+				resp.Body.Close()
+				if decodeErr == nil {
+					for _, it := range payload.Items {
+						if match(it) {
+							return
+						}
+					}
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the activity feed never showed the expected item")
+}
+
+// waitForActivityGap polls the activity feed until a gap marker shows up. The
+// feed lost the window the gateway connection was down, so the reconnect must
+// mark the gap.
+func waitForActivityGap(t *testing.T, client *http.Client, base string, cookie *http.Cookie, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequest(http.MethodGet, base+"/api/activity", nil)
+		if err == nil {
+			req.AddCookie(cookie)
+			resp, err := client.Do(req)
+			if err == nil {
+				var payload struct {
+					Items []struct {
+						Type string `json:"type"`
+					} `json:"items"`
+				}
+				decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+				resp.Body.Close()
+				if decodeErr == nil {
+					for _, it := range payload.Items {
+						if it.Type == string(activity.TypeGap) {
+							return
+						}
+					}
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the activity feed never showed the reconnection gap marker")
 }
 
 // tryStatus performs a GET and returns the status code. A transport error
@@ -404,5 +488,80 @@ func TestGatewayEventReachesSSESubscriber(t *testing.T) {
 		case <-deadline:
 			t.Fatal("subscriber never received the gateway event delta")
 		}
+	}
+}
+
+// TestTeamTaskEventReachesActivityFeed proves the live pump loads the team
+// task events: the team.task.* family was never consumed, so the feed only
+// showed the agent events.
+func TestTeamTaskEventReachesActivityFeed(t *testing.T) {
+	tenantID := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: goclaw.RequiredCapabilities,
+		Agents: []testutil.AgentData{
+			{ID: "a1", AgentKey: "a1", DisplayName: "A1", TenantID: tenantID.String(), Model: "gpt-4", Status: "active"},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	state := live.NewState()
+	hub := live.NewHub(state)
+	ring := activity.NewRingBuffer()
+
+	wsClient := goclaw.NewClient(goclaw.Config{
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     tenantID,
+		UserID:       "dashboard",
+		ReconnectMin: 20 * time.Millisecond,
+		ReconnectMax: 100 * time.Millisecond,
+		OnDisconnect: func(err error) {},
+	})
+	if err := wsClient.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { wsClient.Close() })
+
+	httpClient := goclaw.NewHTTPClient(f.URL(), "ak", tenantID.String(), 5*time.Second)
+	reconciler := live.NewReconciler(state, httpClient, hub)
+	pumpGatewayEvents(ctx, wsClient, reconciler, ring)
+
+	// The gateway wire shape of a team task event.
+	f.BroadcastEvent(protocol.EventTeamTaskCreated, map[string]any{
+		"team_id":   "team-a",
+		"task_id":   "task-1",
+		"status":    "in_progress",
+		"subject":   "Ship it",
+		"actor_id":  "agent-1",
+		"timestamp": "2026-10-19T10:00:00Z",
+	})
+
+	deadline := time.After(15 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("the team task event never reached the activity feed")
+		default:
+		}
+		items := ring.List(10)
+		for _, it := range items {
+			if it.Type != activity.TypeTaskEvent {
+				continue
+			}
+			if it.TeamID != "team-a" {
+				t.Errorf("team_id = %q, want team-a", it.TeamID)
+			}
+			if it.Summary == "" {
+				t.Error("summary is empty, want the event name")
+			}
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }

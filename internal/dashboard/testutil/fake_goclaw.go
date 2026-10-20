@@ -70,6 +70,9 @@ type Config struct {
 	// UsageBreakdown returned by GET /v1/usage/events/breakdown (the "rows"
 	// of the response envelope).
 	UsageBreakdown []map[string]any
+	// ActivityLogs returned by GET /v1/activity (the "logs" array of the
+	// response envelope).
+	ActivityLogs []map[string]any
 	// Version advertised in connect response.
 	Version string
 }
@@ -365,7 +368,19 @@ func (f *FakeGoClaw) handleUsageTimeseries(w http.ResponseWriter, r *http.Reques
 func (f *FakeGoClaw) handleActivity(w http.ResponseWriter, r *http.Request) {
 	f.recordHeaders(r)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+	f.mu.Lock()
+	logs := f.cfg.ActivityLogs
+	f.mu.Unlock()
+	if logs == nil {
+		logs = []map[string]any{}
+	}
+	// The gateway returns the audit rows under "logs".
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"logs":   logs,
+		"total":  len(logs),
+		"limit":  50,
+		"offset": 0,
+	})
 }
 
 // ----- WebSocket handler -----
