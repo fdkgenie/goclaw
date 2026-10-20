@@ -221,3 +221,58 @@ func TestTraceStatusTerminalDeletesAndTombstones(t *testing.T) {
 		t.Fatal("terminated trace resurrected by snapshot")
 	}
 }
+
+// TestTerminalTraceStatusRetiresTheRun pins the tombstone contract: the
+// trace status event carries no run id, so a terminal status must retire the
+// run that references the trace. Otherwise the finished run keeps counting
+// as live and a later snapshot resurrects it.
+func TestTerminalTraceStatusRetiresTheRun(t *testing.T) {
+	s := NewState()
+
+	// The run was announced and later confirmed by a trace snapshot.
+	s.ApplyEvent(event("r1", "t1", "run.started", "a1", "team1"))
+	s.MergeSnapshot([]TraceData{trace("r1", "t1", "running", "a1", "team1")}, true)
+	if e := s.entries[runKey("r1")]; e == nil {
+		t.Fatal("expected the run entry before the terminal trace status")
+	}
+
+	// Terminal trace status (the gateway payload carries no run id).
+	s.ApplyEvent(goclaw.AgentEventPayload{
+		TraceID: "t1",
+		Event:   "trace.status",
+		Status:  "completed",
+	})
+
+	if e := s.entries[runKey("r1")]; e != nil {
+		t.Fatal("terminal trace status did not retire the run entry")
+	}
+	if _, ok := s.tombstones[runKey("r1")]; !ok {
+		t.Fatal("expected a tombstone for the retired run")
+	}
+	if _, ok := s.tombstones[traceKey("t1")]; !ok {
+		t.Fatal("expected a tombstone for the terminal trace")
+	}
+
+	// A later snapshot must not resurrect the finished run.
+	s.MergeSnapshot([]TraceData{trace("r1", "t1", "running", "a1", "team1")}, true)
+	if e := s.entries[runKey("r1")]; e != nil {
+		t.Fatal("snapshot resurrected a run that reached a terminal trace status")
+	}
+}
+
+// TestNonTerminalTraceStatusKeepsTheRun proves the retirement is limited to
+// terminal statuses.
+func TestNonTerminalTraceStatusKeepsTheRun(t *testing.T) {
+	s := NewState()
+	s.ApplyEvent(event("r1", "t1", "run.started", "a1", "team1"))
+
+	s.ApplyEvent(goclaw.AgentEventPayload{
+		TraceID: "t1",
+		Event:   "trace.status",
+		Status:  "running",
+	})
+
+	if e := s.entries[runKey("r1")]; e == nil {
+		t.Fatal("a non-terminal trace status removed the run entry")
+	}
+}

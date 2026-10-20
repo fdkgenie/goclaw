@@ -100,6 +100,16 @@ func (s *State) ApplyEvent(evt goclaw.AgentEventPayload) {
 		tk := traceKey(evt.TraceID)
 		delete(s.entries, tk)
 		s.tombstones[tk] = now
+		// The trace status event carries no run id, so the run is retired
+		// through the entry that references the trace. Without this the run
+		// kept counting as live and a later snapshot resurrected it.
+		for key, e := range s.entries {
+			if e.TraceID != evt.TraceID {
+				continue
+			}
+			delete(s.entries, key)
+			s.tombstones[key] = now
+		}
 
 	case "run.started":
 		if evt.RunID == "" {
