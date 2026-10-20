@@ -46,9 +46,11 @@ func NewRouter(cfg *config.Config, state *live.State, ws *goclaw.Client, httpCli
 		web:   webui.Handler(cfg.WebDir),
 	}
 
-	// Public auth.
-	r.mux.HandleFunc("POST /api/login", r.loginHandler)
-	r.mux.HandleFunc("POST /api/logout", r.logoutHandler)
+	// Public auth. Both routes are state-changing (they mint and clear the
+	// session cookie), so they validate the Origin header even though they
+	// sit outside the /api/ CSRF chain.
+	r.mux.Handle("POST /api/login", originMiddleware(http.HandlerFunc(r.loginHandler)))
+	r.mux.Handle("POST /api/logout", originMiddleware(http.HandlerFunc(r.logoutHandler)))
 
 	// Session state stays available while degraded so the SPA can decide
 	// whether to show the login screen instead of the data shell.

@@ -15,18 +15,46 @@ const sessionCookieName = "goclaw_dashboard_session"
 func csrfMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				http.Error(w, "missing Origin header", http.StatusForbidden)
-				return
-			}
-			if !originAllowed(origin, r.Host) {
-				http.Error(w, "origin not allowed", http.StatusForbidden)
+			if !checkOrigin(w, r) {
 				return
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// originMiddleware rejects requests whose Origin header is missing or does
+// not match the request host. It guards the state-changing routes that live
+// outside /api/ (the public auth routes), so a cross-origin page cannot
+// drive them.
+func originMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !checkOrigin(w, r) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// checkOrigin validates the Origin header of a request and writes the 403
+// response when it is missing or foreign.
+//
+// The Origin header is mandatory: browsers always send it on state-changing
+// requests, so a missing Origin means the request did not come from a
+// browser form/fetch. A Referer is deliberately not accepted as a substitute
+// (it is frequently stripped and would weaken the check), so the policy
+// fails closed.
+func checkOrigin(w http.ResponseWriter, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		http.Error(w, "missing Origin header", http.StatusForbidden)
+		return false
+	}
+	if !originAllowed(origin, r.Host) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // originAllowed reports whether origin (a full URL like https://host:port) is
