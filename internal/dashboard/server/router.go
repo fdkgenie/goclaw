@@ -136,7 +136,11 @@ func (r *Router) logoutHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleOverview(w http.ResponseWriter, req *http.Request) {
-	ov, err := aggregate.Overview(req.Context(), r.state, r.ws, r.http, nil, nil)
+	ctx := req.Context()
+	// The team roster is resolved first: the task KPIs are queried per team,
+	// so it must be known before the aggregates are computed.
+	teams, resolve := r.teams(ctx)
+	ov, err := aggregate.Overview(ctx, r.state, r.ws, r.http, teams, resolve)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -166,19 +170,29 @@ func (r *Router) handleCost(w http.ResponseWriter, req *http.Request) {
 	r.writeJSON(w, cs)
 }
 
-// teamResolver maps a team id to its display name for the cost breakdown.
-// It is best effort: when the gateway team list is unavailable the rows keep
-// their raw team id.
-func (r *Router) teamResolver(ctx context.Context) aggregate.TeamResolver {
+// teams loads the team roster and the matching display-name resolver.
+//
+// The roster is best effort: when the gateway team list is unavailable the
+// overview still reports the live and cost KPIs, the task KPIs cover no team
+// and the cost breakdown keeps the raw team ids.
+func (r *Router) teams(ctx context.Context) ([]aggregate.TeamRef, aggregate.TeamResolver) {
 	if r.ws == nil {
-		return nil
+		return nil, nil
 	}
 	teams, err := aggregate.ListTeams(ctx, r.ws)
 	if err != nil {
 		slog.Warn("dashboard team list failed", "err", err)
-		return nil
+		return nil, nil
 	}
-	return aggregate.TeamResolverFor(teams)
+	return teams, aggregate.TeamResolverFor(teams)
+}
+
+// teamResolver maps a team id to its display name for the cost breakdown.
+// It is best effort: when the gateway team list is unavailable the rows keep
+// their raw team id.
+func (r *Router) teamResolver(ctx context.Context) aggregate.TeamResolver {
+	_, resolve := r.teams(ctx)
+	return resolve
 }
 
 func (r *Router) handleActivity(w http.ResponseWriter, req *http.Request) {

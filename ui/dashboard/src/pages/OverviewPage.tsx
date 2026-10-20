@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { apiGet } from "../api/client";
 import { t } from "../i18n";
-import type { LiveKPI } from "../api/types";
+import type { LiveKPI, OverviewKPI } from "../api/types";
 
 export interface OverviewPageProps {
   snapshot: LiveKPI | null;
@@ -20,10 +21,33 @@ const qualityBadge = (quality: "exact" | "approx"): React.ReactNode => (
 );
 
 export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode => {
+  const [overview, setOverview] = useState<OverviewKPI | null>(null);
+
+  // The task and cost tiles come from the composite /api/overview endpoint:
+  // the live snapshot only carries the run counts.
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<OverviewKPI>("/api/overview")
+      .then((data) => {
+        if (!cancelled) setOverview(data);
+      })
+      .catch(() => {
+        // Keep the live tiles: the overview aggregates are best effort.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const traced = useMemo(() => snapshot?.active_runs_traced ?? 0, [snapshot]);
   const untraced = useMemo(() => snapshot?.active_runs_untraced ?? 0, [snapshot]);
   const total = useMemo(() => snapshot?.active_runs_total ?? 0, [snapshot]);
   const quality = useMemo(() => snapshot?.quality ?? "approx", [snapshot]);
+
+  const taskKPI = overview?.task_kpi;
+  const activeTasks = taskKPI?.total_active;
+  const inReview = taskKPI?.total_in_review;
+  const costUSD = overview?.cost?.summary_usd;
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -44,12 +68,19 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
 
       <div className="card">
         <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">{t("overview.tasks")}</div>
-        <div className="text-2xl font-bold">{t("overview.kpi.truncated_label", { value: total })}</div>
+        <div className="text-2xl font-bold" data-testid="tasks-active">
+          {activeTasks ? fmt(activeTasks.value, activeTasks.exact) : "—"}
+        </div>
+        <div className="text-sm text-slate-500 mt-1" data-testid="tasks-in-review">
+          {t("overview.in_review")}: {inReview ? fmt(inReview.value, inReview.exact) : "—"}
+        </div>
       </div>
 
       <div className="card">
         <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">{t("overview.cost")}</div>
-        <div className="text-2xl font-bold">—</div>
+        <div className="text-2xl font-bold" data-testid="cost-total">
+          {costUSD === undefined ? "—" : `$${costUSD.toFixed(2)}`}
+        </div>
       </div>
     </div>
   );

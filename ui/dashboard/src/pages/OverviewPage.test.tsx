@@ -1,11 +1,35 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import ReactDOM from "react-dom/client";
 import { OverviewPage } from "./OverviewPage";
-import type { LiveKPI } from "../api/types";
+import type { LiveKPI, OverviewKPI } from "../api/types";
 
 let container: HTMLDivElement;
 let root: ReactDOM.Root;
+
+function mockOverview(body: unknown) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+  );
+}
+
+function emptyOverview(): OverviewKPI {
+  return {
+    live: { active_runs_traced: 0, active_runs_untraced: 0, active_runs_total: 0, quality: "approx" },
+    task_kpi: {
+      teams: [],
+      total_active: { value: 0, exact: true },
+      total_in_review: { value: 0, exact: true },
+    },
+    cost: { summary_usd: 0, calls: 0, rows: [] },
+  };
+}
 
 beforeEach(() => {
   container = document.createElement("div");
@@ -16,40 +40,84 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  vi.unstubAllGlobals();
 });
 
-function render(snapshot: LiveKPI | null) {
-  act(() => {
+async function render(snapshot: LiveKPI | null) {
+  await act(async () => {
     root.render(<OverviewPage snapshot={snapshot} />);
   });
   return container;
 }
 
 describe("OverviewPage", () => {
-  it("renders traced and untraced runs as separate numbers", () => {
-    render({ active_runs_traced: 3, active_runs_untraced: 2, active_runs_total: 5, quality: "exact" });
+  it("renders traced and untraced runs as separate numbers", async () => {
+    mockOverview(emptyOverview());
+    await render({ active_runs_traced: 3, active_runs_untraced: 2, active_runs_total: 5, quality: "exact" });
     expect(container.textContent).toContain("3");
     expect(container.textContent).toContain("2");
     expect(container.textContent).toContain("5");
   });
 
-  it("renders exact quality badge when quality is exact", () => {
-    render({ active_runs_traced: 1, active_runs_untraced: 0, active_runs_total: 1, quality: "exact" });
+  it("renders exact quality badge when quality is exact", async () => {
+    mockOverview(emptyOverview());
+    await render({ active_runs_traced: 1, active_runs_untraced: 0, active_runs_total: 1, quality: "exact" });
     expect(container.textContent).toContain("Exact");
   });
 
-  it("renders approx quality badge when quality is approx", () => {
-    render({ active_runs_traced: 0, active_runs_untraced: 1, active_runs_total: 1, quality: "approx" });
+  it("renders approx quality badge when quality is approx", async () => {
+    mockOverview(emptyOverview());
+    await render({ active_runs_traced: 0, active_runs_untraced: 1, active_runs_total: 1, quality: "approx" });
     expect(container.textContent).toContain("Approx");
   });
 
-  it("renders truncated task count with ≥ prefix when not exact", () => {
-    render({ active_runs_traced: 0, active_runs_untraced: 0, active_runs_total: 0, quality: "approx" });
-    expect(container.textContent).toMatch(/≥0/);
+  // The task tile used to show the live run count; it must show the task KPI
+  // of the composite /api/overview endpoint instead.
+  it("renders the task and cost tiles from the overview endpoint", async () => {
+    const overview = emptyOverview();
+    overview.task_kpi.total_active = { value: 7, exact: true };
+    overview.task_kpi.total_in_review = { value: 2, exact: true };
+    overview.cost = { summary_usd: 42.5, calls: 4, rows: [] };
+    mockOverview(overview);
+
+    await render({ active_runs_traced: 3, active_runs_untraced: 2, active_runs_total: 5, quality: "exact" });
+
+    expect(container.querySelector('[data-testid="tasks-active"]')?.textContent).toBe("7");
+    expect(container.querySelector('[data-testid="tasks-in-review"]')?.textContent).toContain("2");
+    expect(container.querySelector('[data-testid="cost-total"]')?.textContent).toBe("$42.50");
   });
 
-  it("handles null snapshot gracefully", () => {
-    render(null);
+  it("requests the overview endpoint", async () => {
+    mockOverview(emptyOverview());
+    await render(null);
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalled();
+    const called = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(called.some((u) => u.includes("/api/overview"))).toBe(true);
+  });
+
+  it("renders truncated task count with ≥ prefix when the task KPI is not exact", async () => {
+    const overview = emptyOverview();
+    overview.task_kpi.total_active = { value: 200, exact: false };
+    mockOverview(overview);
+
+    await render({ active_runs_traced: 0, active_runs_untraced: 0, active_runs_total: 0, quality: "approx" });
+    expect(container.querySelector('[data-testid="tasks-active"]')?.textContent).toBe("≥200");
+  });
+
+  it("keeps the live tiles when the overview endpoint fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("boom", { status: 500, statusText: "Internal Server Error" })),
+    );
+    await render({ active_runs_traced: 1, active_runs_untraced: 0, active_runs_total: 1, quality: "exact" });
+    expect(container.textContent).toContain("1");
+    expect(container.querySelector('[data-testid="tasks-active"]')?.textContent).toBe("—");
+  });
+
+  it("handles null snapshot gracefully", async () => {
+    mockOverview(emptyOverview());
+    await render(null);
     expect(container.textContent).toContain("0");
   });
 });
