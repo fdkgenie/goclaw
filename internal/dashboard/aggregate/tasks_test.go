@@ -131,3 +131,41 @@ func TestTaskKPIMultiTeamAggregateExact(t *testing.T) {
 		t.Fatalf("teams = %d, want 2", len(res.Teams))
 	}
 }
+
+// TestTaskKPIErrorResponseIsNotExact pins the fail-soft contract: a failed
+// gateway response carries no task list, so the count is unknown and must be
+// reported as a lower bound instead of a confident exact zero.
+func TestTaskKPIErrorResponseIsNotExact(t *testing.T) {
+	tenantID := mustUUIDAgg(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		TenantID:     tenantID,
+		Capabilities: goclaw.RequiredCapabilities,
+		RPCErrors: map[string]string{
+			"teams.tasks.list": "team store unavailable",
+		},
+	})
+	ws := newAggWS(t, f, tenantID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := TaskKPIs(ctx, ws, []TeamRef{{ID: "team1", Name: "Team 1"}})
+	if err != nil {
+		t.Fatalf("TaskKPIs: %v", err)
+	}
+	if len(res.Teams) != 1 {
+		t.Fatalf("teams = %d, want 1", len(res.Teams))
+	}
+	ttk := res.Teams[0]
+	if ttk.Active.Exact {
+		t.Errorf("active exact = true, want false after a failed gateway response")
+	}
+	if ttk.InReview.Exact {
+		t.Errorf("in_review exact = true, want false after a failed gateway response")
+	}
+	if res.TotalActive.Exact {
+		t.Errorf("total active exact = true, want false after a failed gateway response")
+	}
+	if res.TotalInReview.Exact {
+		t.Errorf("total in_review exact = true, want false after a failed gateway response")
+	}
+}

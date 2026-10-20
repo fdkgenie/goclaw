@@ -56,6 +56,10 @@ type Config struct {
 	// RPCHandler builds the payload for an RPC method from the raw request
 	// params. It takes precedence over RPCPayloads when it returns ok.
 	RPCHandler func(method string, params json.RawMessage) (any, bool)
+	// RPCErrors maps an RPC method to the error message the fake answers it
+	// with. Those methods get an error response (ok=false) instead of a
+	// payload.
+	RPCErrors map[string]string
 	// Agents returned by GET /v1/agents.
 	Agents []AgentData
 	// TracesPages pages returned by GET /v1/traces (paginated by offset/limit).
@@ -442,7 +446,14 @@ func (f *FakeGoClaw) handleRPC(conn *websocket.Conn, req *protocol.RequestFrame)
 	default:
 		f.mu.Lock()
 		f.recordedRPC = append(f.recordedRPC, rpcCall{Method: req.Method, Params: req.Params})
+		errMsg, failed := f.cfg.RPCErrors[req.Method]
 		f.mu.Unlock()
+		if failed {
+			f.writeMu.Lock()
+			_ = conn.WriteJSON(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, errMsg))
+			f.writeMu.Unlock()
+			return
+		}
 		payload := map[string]any{"ok": true}
 		if f.cfg.RPCHandler != nil {
 			if mock, ok := f.cfg.RPCHandler(req.Method, req.Params); ok {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 )
@@ -45,11 +46,10 @@ func TaskKPIs(ctx context.Context, client *goclaw.Client, teams []TeamRef) (*Tas
 			if err != nil {
 				return nil, fmt.Errorf("teams.tasks.list team=%s status=%s: %w", team.ID, status, err)
 			}
-			var parsed tasksListResponse
-			if err := unmarshalPayload(resp.Payload, &parsed); err != nil {
-				return nil, fmt.Errorf("parse teams.tasks.list team=%s: %w", team.ID, err)
+			kpi, err := taskKPIFromResponse(resp)
+			if err != nil {
+				return nil, fmt.Errorf("teams.tasks.list team=%s status=%s: %w", team.ID, status, err)
 			}
-			kpi := TaskKPI{Value: len(parsed.Tasks), Exact: !parsed.HasMore}
 			if status == "active" {
 				ttk.Active = kpi
 				result.TotalActive.Value += kpi.Value
@@ -75,4 +75,32 @@ func unmarshalPayload(payload any, out any) error {
 		return err
 	}
 	return json.Unmarshal(b, out)
+}
+
+// taskKPIFromResponse turns a teams.tasks.list response into a task KPI.
+//
+// A failed gateway response carries no task list, so the count is unknown:
+// the KPI is reported as a lower bound (exact=false) instead of a confident
+// zero. Decoding an error payload produced a zero-value struct that was then
+// reported as exact.
+func taskKPIFromResponse(resp *goclaw.ResponseFrame) (TaskKPI, error) {
+	if resp == nil {
+		return TaskKPI{Exact: false}, fmt.Errorf("empty response")
+	}
+	if !resp.OK {
+		code, message := "", ""
+		if resp.Error != nil {
+			code, message = resp.Error.Code, resp.Error.Message
+		}
+		slog.Warn("dashboard teams.tasks.list failed",
+			"code", code,
+			"message", message,
+		)
+		return TaskKPI{Exact: false}, nil
+	}
+	var parsed tasksListResponse
+	if err := unmarshalPayload(resp.Payload, &parsed); err != nil {
+		return TaskKPI{}, fmt.Errorf("parse payload: %w", err)
+	}
+	return TaskKPI{Value: len(parsed.Tasks), Exact: !parsed.HasMore}, nil
 }
