@@ -11,8 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/activity"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/config"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/live"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/testutil"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
@@ -322,4 +324,83 @@ func waitForStatus(t *testing.T, timeout time.Duration, url string, cookie *http
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("%s (last status %d for %s)", msg, last, url)
+}
+
+// TestGatewayEventReachesSSESubscriber proves the live pipeline end to end:
+// a gateway WebSocket event frame is converted, applied to the live state,
+// and published as an SSE delta that a subscriber receives.
+func TestGatewayEventReachesSSESubscriber(t *testing.T) {
+	tenantID := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: goclaw.RequiredCapabilities,
+		Agents: []testutil.AgentData{
+			{ID: "a1", Name: "A1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	state := live.NewState()
+	hub := live.NewHub(state)
+	ring := activity.NewRingBuffer()
+
+	wsClient := goclaw.NewClient(goclaw.Config{
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     tenantID,
+		UserID:       "dashboard",
+		ReconnectMin: 20 * time.Millisecond,
+		ReconnectMax: 100 * time.Millisecond,
+		OnDisconnect: func(err error) {},
+	})
+	if err := wsClient.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { wsClient.Close() })
+
+	httpClient := goclaw.NewHTTPClient(f.URL(), "ak", tenantID.String(), 5*time.Second)
+	reconciler := live.NewReconciler(state, httpClient, hub)
+
+	pumpGatewayEvents(ctx, wsClient, reconciler, ring)
+
+	// Subscribe before the event so the delta must travel through the hub.
+	_, ch, unsub := hub.Subscribe()
+	defer unsub()
+
+	// The gateway wire shape for an agent event (camelCase, see
+	// internal/agent.AgentEvent).
+	f.BroadcastEvent(protocol.EventAgent, map[string]any{
+		"type":    "run.started",
+		"agentId": "a1",
+		"runId":   "run-42",
+		"teamId":  "team-a",
+	})
+
+	deadline := time.After(15 * time.Second)
+	for {
+		select {
+		case delta := <-ch:
+			if delta.Kind != "event" {
+				continue
+			}
+			if delta.KPI == nil || delta.KPI.ActiveRunsUntraced != 1 {
+				t.Fatalf("delta KPI = %+v, want one untraced run", delta.KPI)
+			}
+			items := ring.List(10)
+			if len(items) != 1 {
+				t.Fatalf("activity ring items = %d, want 1", len(items))
+			}
+			if items[0].Summary != "run.started" {
+				t.Fatalf("activity summary = %q, want run.started", items[0].Summary)
+			}
+			return
+		case <-deadline:
+			t.Fatal("subscriber never received the gateway event delta")
+		}
+	}
 }

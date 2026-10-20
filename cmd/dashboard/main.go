@@ -134,35 +134,7 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 
 	// Wire the gateway event stream into the live pipeline:
 	// WS event -> live state (via hub) -> SSE delta.
-	agentEvents := make(chan *goclaw.EventFrame, 256)
-	traceEvents := make(chan *goclaw.EventFrame, 256)
-	wsClient.Subscribe(protocol.EventAgent, agentEvents)
-	wsClient.Subscribe(protocol.EventTraceStatusChanged, traceEvents)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case frame := <-agentEvents:
-				if evt, ok := goclaw.AgentEventFromFrame(frame); ok {
-					ring.Add(activity.ActivityItem{
-						ID:        fmt.Sprintf("agent:%s:%s:%d", evt.RunID, evt.Event, evt.Timestamp.UnixNano()),
-						Type:      activity.TypeAgentEvent,
-						Timestamp: evt.Timestamp,
-						AgentID:   evt.AgentID,
-						TeamID:    evt.TeamID,
-						Summary:   evt.Event,
-						Details:   evt,
-					})
-					reconciler.HandleEvent(evt)
-				}
-			case frame := <-traceEvents:
-				if evt, ok := goclaw.TraceStatusFromFrame(frame); ok {
-					reconciler.HandleEvent(evt)
-				}
-			}
-		}
-	}()
+	pumpGatewayEvents(ctx, wsClient, reconciler, ring)
 
 	// Start background reconcile loop.
 	go reconciler.Run(ctx)
@@ -203,4 +175,49 @@ func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions
 
 func slogError(msg string) error {
 	return fmt.Errorf("%s", msg)
+}
+
+// pumpGatewayEvents forwards gateway WebSocket events into the live pipeline.
+//
+// Agent lifecycle events are appended to the activity ring and applied to the
+// live state through the reconciler, which publishes an SSE delta to every
+// subscriber. Trace status events only update the live state. The pump runs
+// until ctx is cancelled.
+func pumpGatewayEvents(ctx context.Context, wsClient *goclaw.Client, reconciler *live.Reconciler, ring *activity.RingBuffer) {
+	agentEvents := make(chan *goclaw.EventFrame, 256)
+	traceEvents := make(chan *goclaw.EventFrame, 256)
+	wsClient.Subscribe(protocol.EventAgent, agentEvents)
+	wsClient.Subscribe(protocol.EventTraceStatusChanged, traceEvents)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame := <-agentEvents:
+				evt, ok := goclaw.AgentEventFromFrame(frame)
+				if !ok {
+					continue
+				}
+				if ring != nil {
+					ring.Add(activity.ActivityItem{
+						ID:        fmt.Sprintf("agent:%s:%s:%d", evt.RunID, evt.Event, evt.Timestamp.UnixNano()),
+						Type:      activity.TypeAgentEvent,
+						Timestamp: evt.Timestamp,
+						AgentID:   evt.AgentID,
+						TeamID:    evt.TeamID,
+						Summary:   evt.Event,
+						Details:   evt,
+					})
+				}
+				reconciler.HandleEvent(evt)
+			case frame := <-traceEvents:
+				evt, ok := goclaw.TraceStatusFromFrame(frame)
+				if !ok {
+					continue
+				}
+				reconciler.HandleEvent(evt)
+			}
+		}
+	}()
 }
