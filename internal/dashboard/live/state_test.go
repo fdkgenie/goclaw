@@ -276,3 +276,54 @@ func TestNonTerminalTraceStatusKeepsTheRun(t *testing.T) {
 		t.Fatal("a non-terminal trace status removed the run entry")
 	}
 }
+
+// TestKPIQualitySeparateTracedAndTotal pins the two-tier quality of the
+// live KPI: the traced count is exact on a complete snapshot, but the
+// merged total is never exact while an event-only run exists.
+func TestKPIQualitySeparateTracedAndTotal(t *testing.T) {
+	t.Run("traced only is exact", func(t *testing.T) {
+		s := NewState()
+		s.MergeSnapshot([]TraceData{trace("r1", "t1", "running", "a1", "team1")}, true)
+
+		kpi := s.ComputeKPI()
+		if kpi.ActiveRunsTraced != 1 || kpi.ActiveRunsUntraced != 0 {
+			t.Fatalf("kpi = %+v, want 1 traced and 0 untraced", kpi)
+		}
+		if kpi.TracedQuality != QualityExact {
+			t.Errorf("traced quality = %q, want %q", kpi.TracedQuality, QualityExact)
+		}
+		if kpi.Quality != QualityExact {
+			t.Errorf("total quality = %q, want %q", kpi.Quality, QualityExact)
+		}
+	})
+
+	t.Run("event only run makes the total approximate", func(t *testing.T) {
+		s := NewState()
+		s.MergeSnapshot([]TraceData{trace("r1", "t1", "running", "a1", "team1")}, true)
+		s.ApplyEvent(event("r2", "", "run.started", "a2", "team1"))
+
+		kpi := s.ComputeKPI()
+		if kpi.ActiveRunsUntraced != 1 {
+			t.Fatalf("kpi = %+v, want 1 untraced run", kpi)
+		}
+		if kpi.TracedQuality != QualityExact {
+			t.Errorf("traced quality = %q, want %q", kpi.TracedQuality, QualityExact)
+		}
+		if kpi.Quality != QualityApprox {
+			t.Errorf("total quality = %q, want %q while an event-only run exists", kpi.Quality, QualityApprox)
+		}
+	})
+
+	t.Run("event only run alone makes the total approximate", func(t *testing.T) {
+		s := NewState()
+		s.ApplyEvent(event("r2", "", "run.started", "a2", "team1"))
+
+		kpi := s.ComputeKPI()
+		if kpi.Quality != QualityApprox {
+			t.Errorf("total quality = %q, want %q", kpi.Quality, QualityApprox)
+		}
+		if kpi.TracedQuality != QualityExact {
+			t.Errorf("traced quality = %q, want %q", kpi.TracedQuality, QualityExact)
+		}
+	})
+}

@@ -57,6 +57,7 @@ export interface LiveKPI {
   active_runs_untraced: number;
   active_runs_total: number;
   quality: "exact" | "approx";
+  traced_quality: "exact" | "approx";
 }
 
 export interface OrgChartNode {

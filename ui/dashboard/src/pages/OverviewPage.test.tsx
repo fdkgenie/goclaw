@@ -21,7 +21,7 @@ function mockOverview(body: unknown) {
 
 function emptyOverview(): OverviewKPI {
   return {
-    live: { active_runs_traced: 0, active_runs_untraced: 0, active_runs_total: 0, quality: "approx" },
+    live: { active_runs_traced: 0, active_runs_untraced: 0, active_runs_total: 0, quality: "approx", traced_quality: "approx" },
     task_kpi: {
       teams: [],
       total_active: { value: 0, exact: true },
@@ -54,7 +54,7 @@ async function render(snapshot: LiveKPI | null) {
 describe("OverviewPage", () => {
   it("renders traced and untraced runs as separate numbers", async () => {
     mockOverview(emptyOverview());
-    await render({ active_runs_traced: 3, active_runs_untraced: 2, active_runs_total: 5, quality: "exact" });
+    await render({ active_runs_traced: 3, active_runs_untraced: 2, active_runs_total: 5, quality: "exact", traced_quality: "exact" });
     expect(container.textContent).toContain("3");
     expect(container.textContent).toContain("2");
     expect(container.textContent).toContain("5");
@@ -62,14 +62,24 @@ describe("OverviewPage", () => {
 
   it("renders exact quality badge when quality is exact", async () => {
     mockOverview(emptyOverview());
-    await render({ active_runs_traced: 1, active_runs_untraced: 0, active_runs_total: 1, quality: "exact" });
+    await render({ active_runs_traced: 1, active_runs_untraced: 0, active_runs_total: 1, quality: "exact", traced_quality: "exact" });
     expect(container.textContent).toContain("Exact");
   });
 
   it("renders approx quality badge when quality is approx", async () => {
     mockOverview(emptyOverview());
-    await render({ active_runs_traced: 0, active_runs_untraced: 1, active_runs_total: 1, quality: "approx" });
+    await render({ active_runs_traced: 0, active_runs_untraced: 1, active_runs_total: 1, quality: "approx", traced_quality: "approx" });
     expect(container.textContent).toContain("Approx");
+  });
+
+  // The traced count and the merged total carry their own quality: an
+  // event-only run makes the total approximate while the traced count stays
+  // exact.
+  it("renders the traced quality apart from the total quality", async () => {
+    mockOverview(emptyOverview());
+    await render({ active_runs_traced: 3, active_runs_untraced: 1, active_runs_total: 4, quality: "approx", traced_quality: "exact" });
+    expect(container.querySelector('[data-testid="traced-quality"]')?.textContent).toBe("Exact");
+    expect(container.querySelector('[data-testid="total-quality"]')?.textContent).toBe("Approx");
   });
 
   // The task tile used to show the live run count; it must show the task KPI
@@ -81,7 +91,7 @@ describe("OverviewPage", () => {
     overview.cost = { summary_usd: 42.5, calls: 4, rows: [] };
     mockOverview(overview);
 
-    await render({ active_runs_traced: 3, active_runs_untraced: 2, active_runs_total: 5, quality: "exact" });
+    await render({ active_runs_traced: 3, active_runs_untraced: 2, active_runs_total: 5, quality: "exact", traced_quality: "exact" });
 
     expect(container.querySelector('[data-testid="tasks-active"]')?.textContent).toBe("7");
     expect(container.querySelector('[data-testid="tasks-in-review"]')?.textContent).toContain("2");
@@ -120,7 +130,7 @@ describe("OverviewPage", () => {
     overview.task_kpi.total_active = { value: 200, exact: false };
     mockOverview(overview);
 
-    await render({ active_runs_traced: 0, active_runs_untraced: 0, active_runs_total: 0, quality: "approx" });
+    await render({ active_runs_traced: 0, active_runs_untraced: 0, active_runs_total: 0, quality: "approx", traced_quality: "approx" });
     expect(container.querySelector('[data-testid="tasks-active"]')?.textContent).toBe("≥200");
   });
 
@@ -129,7 +139,7 @@ describe("OverviewPage", () => {
       "fetch",
       vi.fn(async () => new Response("boom", { status: 500, statusText: "Internal Server Error" })),
     );
-    await render({ active_runs_traced: 1, active_runs_untraced: 0, active_runs_total: 1, quality: "exact" });
+    await render({ active_runs_traced: 1, active_runs_untraced: 0, active_runs_total: 1, quality: "exact", traced_quality: "exact" });
     expect(container.textContent).toContain("1");
     expect(container.querySelector('[data-testid="tasks-active"]')?.textContent).toBe("—");
   });

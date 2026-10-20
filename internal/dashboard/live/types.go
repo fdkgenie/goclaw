@@ -37,11 +37,17 @@ type LiveEntry struct {
 }
 
 // LiveKPI aggregates live run counts with a quality tag.
+//
+// The traced and the untraced counts carry their own quality: the traced
+// count is exact when the last snapshot was complete, the untraced count is
+// always best-effort. Quality is the quality of the merged total, which can
+// never be exact while an event-only run exists.
 type LiveKPI struct {
 	ActiveRunsTraced   int    `json:"active_runs_traced"`
 	ActiveRunsUntraced int    `json:"active_runs_untraced"`
 	ActiveRunsTotal    int    `json:"active_runs_total"`
-	Quality            string `json:"quality"` // QualityExact or QualityApprox
+	Quality            string `json:"quality"`        // QualityExact or QualityApprox
+	TracedQuality      string `json:"traced_quality"` // QualityExact or QualityApprox
 }
 
 // TraceData is a trace record from a gateway trace snapshot.

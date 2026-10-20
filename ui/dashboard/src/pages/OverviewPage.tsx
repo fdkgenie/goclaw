@@ -10,8 +10,9 @@ export interface OverviewPageProps {
 const fmt = (n: number, exact: boolean): string =>
   exact ? String(n) : `≥${n}`;
 
-const qualityBadge = (quality: "exact" | "approx"): React.ReactNode => (
+const qualityBadge = (quality: "exact" | "approx", testId?: string): React.ReactNode => (
   <span
+    data-testid={testId}
     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
       quality === "exact" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-800"
     }`}
@@ -43,6 +44,7 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
   const untraced = useMemo(() => snapshot?.active_runs_untraced ?? 0, [snapshot]);
   const total = useMemo(() => snapshot?.active_runs_total ?? 0, [snapshot]);
   const quality = useMemo(() => snapshot?.quality ?? "approx", [snapshot]);
+  const tracedQuality = useMemo(() => snapshot?.traced_quality ?? "approx", [snapshot]);
 
   const taskKPI = overview?.task_kpi;
   const activeTasks = taskKPI?.total_active;
@@ -55,11 +57,12 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
       <div className="card">
         <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">{t("overview.live_runs")}</div>
         <div className="text-2xl font-bold">{total}</div>
-        <div className="flex gap-2 mt-2">
+        <div className="flex gap-2 mt-2 items-center">
           <span className="text-sm">{t("overview.traced")}: {traced}</span>
+          {qualityBadge(tracedQuality, "traced-quality")}
           <span className="text-sm">{t("overview.untraced")}: {untraced}</span>
         </div>
-        <div className="mt-3">{qualityBadge(quality)}</div>
+        <div className="mt-3">{qualityBadge(quality, "total-quality")}</div>
       </div>
 
       <div className="card">

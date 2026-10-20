@@ -264,8 +264,11 @@ func (s *State) SetDegraded(v bool) {
 }
 
 // ComputeKPI computes the aggregated live KPI with quality tags.
-// Quality is approx when degraded, stale (unverified event_only), or any
-// traced entry has a nonzero missing count (grace period).
+//
+// The traced count is exact when the last snapshot was complete, the state is
+// not degraded, no run is stale and no traced entry is missing (grace period
+// not resolved). The merged total is never exact while an event-only run
+// exists: those runs are best-effort and only known from agent events.
 func (s *State) ComputeKPI() LiveKPI {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -288,8 +291,14 @@ func (s *State) ComputeKPI() LiveKPI {
 		}
 	}
 
-	quality := QualityExact
+	tracedQuality := QualityExact
 	if s.degraded || stale || missing {
+		tracedQuality = QualityApprox
+	}
+	quality := tracedQuality
+	if untraced > 0 {
+		// The total merges the traced count with the best-effort event-only
+		// count, so it can never claim exactness.
 		quality = QualityApprox
 	}
 
@@ -298,6 +307,7 @@ func (s *State) ComputeKPI() LiveKPI {
 		ActiveRunsUntraced: untraced,
 		ActiveRunsTotal:    traced + untraced,
 		Quality:            quality,
+		TracedQuality:      tracedQuality,
 	}
 }
 
