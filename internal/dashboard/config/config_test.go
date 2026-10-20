@@ -25,12 +25,12 @@ func unset(t *testing.T, keys ...string) {
 
 func TestDefaults(t *testing.T) {
 	setenv(t, map[string]string{
-		"GOCLAW_API_URL":      "http://localhost:18790",
-		"GOCLAW_WS_URL":       "",
-		"GOCLAW_API_KEY":      "ak",
-		"DASHBOARD_PASSWORD":  "pw",
-		"GOCLAW_TENANT_ID":    "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
-		"DASHBOARD_WEB_DIR":   "",
+		"GOCLAW_API_URL":     "http://localhost:18790",
+		"GOCLAW_WS_URL":      "",
+		"GOCLAW_API_KEY":     "ak",
+		"DASHBOARD_PASSWORD": "pw",
+		"GOCLAW_TENANT_ID":   "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		"DASHBOARD_WEB_DIR":  "",
 	})
 	unset(t, "GOCLAW_WS_URL")
 
@@ -57,10 +57,10 @@ func TestDefaults(t *testing.T) {
 
 func TestMissingAPIKey(t *testing.T) {
 	setenv(t, map[string]string{
-		"GOCLAW_API_URL":      "http://localhost:18790",
-		"GOCLAW_API_KEY":      "",
-		"DASHBOARD_PASSWORD":  "pw",
-		"GOCLAW_TENANT_ID":    "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		"GOCLAW_API_URL":     "http://localhost:18790",
+		"GOCLAW_API_KEY":     "",
+		"DASHBOARD_PASSWORD": "pw",
+		"GOCLAW_TENANT_ID":   "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
 	})
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for missing GOCLAW_API_KEY")
@@ -69,10 +69,10 @@ func TestMissingAPIKey(t *testing.T) {
 
 func TestMissingPassword(t *testing.T) {
 	setenv(t, map[string]string{
-		"GOCLAW_API_URL":      "http://localhost:18790",
-		"GOCLAW_API_KEY":      "ak",
-		"DASHBOARD_PASSWORD":  "",
-		"GOCLAW_TENANT_ID":    "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		"GOCLAW_API_URL":     "http://localhost:18790",
+		"GOCLAW_API_KEY":     "ak",
+		"DASHBOARD_PASSWORD": "",
+		"GOCLAW_TENANT_ID":   "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
 	})
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for missing DASHBOARD_PASSWORD")
@@ -81,10 +81,10 @@ func TestMissingPassword(t *testing.T) {
 
 func TestMissingTenantID(t *testing.T) {
 	setenv(t, map[string]string{
-		"GOCLAW_API_URL":      "http://localhost:18790",
-		"GOCLAW_API_KEY":      "ak",
-		"DASHBOARD_PASSWORD":  "pw",
-		"GOCLAW_TENANT_ID":    "",
+		"GOCLAW_API_URL":     "http://localhost:18790",
+		"GOCLAW_API_KEY":     "ak",
+		"DASHBOARD_PASSWORD": "pw",
+		"GOCLAW_TENANT_ID":   "",
 	})
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for missing GOCLAW_TENANT_ID")
@@ -93,10 +93,10 @@ func TestMissingTenantID(t *testing.T) {
 
 func TestInvalidTenantID(t *testing.T) {
 	setenv(t, map[string]string{
-		"GOCLAW_API_URL":      "http://localhost:18790",
-		"GOCLAW_API_KEY":      "ak",
-		"DASHBOARD_PASSWORD":  "pw",
-		"GOCLAW_TENANT_ID":    "not-a-uuid",
+		"GOCLAW_API_URL":     "http://localhost:18790",
+		"GOCLAW_API_KEY":     "ak",
+		"DASHBOARD_PASSWORD": "pw",
+		"GOCLAW_TENANT_ID":   "not-a-uuid",
 	})
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for invalid GOCLAW_TENANT_ID")
@@ -105,11 +105,11 @@ func TestInvalidTenantID(t *testing.T) {
 
 func TestWSURLOverridePreserved(t *testing.T) {
 	setenv(t, map[string]string{
-		"GOCLAW_API_URL":      "http://localhost:18790",
-		"GOCLAW_WS_URL":       "wss://custom.example.com:9999/custom",
-		"GOCLAW_API_KEY":      "ak",
-		"DASHBOARD_PASSWORD":  "pw",
-		"GOCLAW_TENANT_ID":    "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		"GOCLAW_API_URL":     "http://localhost:18790",
+		"GOCLAW_WS_URL":      "wss://custom.example.com:9999/custom",
+		"GOCLAW_API_KEY":     "ak",
+		"DASHBOARD_PASSWORD": "pw",
+		"GOCLAW_TENANT_ID":   "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
 	})
 	cfg, err := Load()
 	if err != nil {
@@ -122,11 +122,11 @@ func TestWSURLOverridePreserved(t *testing.T) {
 
 func TestTLSDerivesWSS(t *testing.T) {
 	setenv(t, map[string]string{
-		"GOCLAW_API_URL":      "https://gateway.example.com/v1",
-		"GOCLAW_WS_URL":       "",
-		"GOCLAW_API_KEY":      "ak",
-		"DASHBOARD_PASSWORD":  "pw",
-		"GOCLAW_TENANT_ID":    "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+		"GOCLAW_API_URL":     "https://gateway.example.com/v1",
+		"GOCLAW_WS_URL":      "",
+		"GOCLAW_API_KEY":     "ak",
+		"DASHBOARD_PASSWORD": "pw",
+		"GOCLAW_TENANT_ID":   "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
 	})
 	unset(t, "GOCLAW_WS_URL")
 	cfg, err := Load()

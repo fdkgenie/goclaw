@@ -45,6 +45,9 @@ ui/web/.vite/
 *.tsbuildinfo
 /internal/dashboard/webui/dist/
 ui/web/vite.config.ts
+ui/dashboard/node_modules/
+ui/dashboard/dist/
+ui/dashboard/.vite/
 
 # UI Desktop (Wails + React)
 ui/desktop/frontend/node_modules/

@@ -63,9 +63,9 @@ func mustParseUUID(t *testing.T, s string) uuid.UUID {
 func TestFakeGoClawHTTPAndWS(t *testing.T) {
 	tenantID := mustParseUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := NewFakeGoClaw(t, Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:     "admin",
+		TenantID: tenantID,
+		IsOwner:  false,
 		Capabilities: []string{
 			protocol.CapEventsCronHeartbeatTenantScoped,
 			"events.team_link_tenant_tagged",
@@ -147,11 +147,11 @@ func TestFakeGoClawHTTPAndWS(t *testing.T) {
 func TestFakeGoClawMissingCapability(t *testing.T) {
 	tenantID := mustParseUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := NewFakeGoClaw(t, Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: []string{"events.cron_heartbeat_tenant_scoped"}, // missing others
-		Agents:     []AgentData{},
+		Agents:       []AgentData{},
 	})
 	conn := mustDialWS(t, f)
 	payload := sendConnect(t, conn)

@@ -1,0 +1,22 @@
+{
+  "dashboard.title": "GoClaw 控制台",
+  "nav.overview": "概览",
+  "nav.orgchart": "组织图",
+  "nav.cost": "成本",
+  "nav.activity": "活动",
+  "btn.signin": "登录",
+  "btn.logout": "退出",
+  "label.password": "密码",
+  "error.invalid_password": "密码不正确",
+  "stale.title": "连接已停滞",
+  "stale.subtitle": "数据可能已过期",
+  "overview.live_runs": "实时运行",
+  "overview.traced": "已追踪",
+  "overview.untraced": "未追踪",
+  "overview.active_runs": "活跃运行",
+  "overview.tasks": "活跃任务",
+  "overview.cost": "消耗率 (USD/小时)",
+  "quality.exact": "精确",
+  "quality.approx": "近似",
+  "overview.kpi.truncated_label": "≥{{value}}"
+}

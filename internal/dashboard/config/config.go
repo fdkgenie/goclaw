@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	defaultAPIURL      = "http://localhost:18790"
+	defaultAPIURL        = "http://localhost:18790"
 	defaultDashboardAddr = "127.0.0.1:18795"
 )
 

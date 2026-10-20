@@ -1,0 +1,22 @@
+{
+  "dashboard.title": "GoClaw Dashboard",
+  "nav.overview": "Overview",
+  "nav.orgchart": "Org Chart",
+  "nav.cost": "Cost",
+  "nav.activity": "Activity",
+  "btn.signin": "Sign in",
+  "btn.logout": "Logout",
+  "label.password": "Password",
+  "error.invalid_password": "Invalid password",
+  "stale.title": "Connection stale",
+  "stale.subtitle": "Data may be outdated",
+  "overview.live_runs": "Live Runs",
+  "overview.traced": "Traced",
+  "overview.untraced": "Untraced",
+  "overview.active_runs": "Active Runs",
+  "overview.tasks": "Active Tasks",
+  "overview.cost": "Burn Rate (USD/h)",
+  "quality.exact": "Exact",
+  "quality.approx": "Approx",
+  "overview.kpi.truncated_label": "≥{{value}}"
+}

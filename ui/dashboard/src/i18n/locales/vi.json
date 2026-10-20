@@ -1,0 +1,22 @@
+{
+  "dashboard.title": "Bảng điều khiển GoClaw",
+  "nav.overview": "Tổng quan",
+  "nav.orgchart": "Sơ đồ tổ chức",
+  "nav.cost": "Chi phí",
+  "nav.activity": "Hoạt động",
+  "btn.signin": "Đăng nhập",
+  "btn.logout": "Đăng xuất",
+  "label.password": "Mật khẩu",
+  "error.invalid_password": "Mật khẩu không chính xác",
+  "stale.title": "Kết nối bị gián đoạn",
+  "stale.subtitle": "Dữ liệu có thể bị lỗi thời",
+  "overview.live_runs": "Chạy trực tiếp",
+  "overview.traced": "Đã ghi dấu",
+  "overview.untraced": "Chưa ghi dấu",
+  "overview.active_runs": "Đang chạy",
+  "overview.tasks": "Công việc đang xử lý",
+  "overview.cost": "Chi phí chạy (USD/giờ)",
+  "quality.exact": "Chính xác",
+  "quality.approx": "Kích xấp xỉ",
+  "overview.kpi.truncated_label": "≥{{value}}"
+}
