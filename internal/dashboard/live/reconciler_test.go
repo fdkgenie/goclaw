@@ -33,7 +33,7 @@ func TestFetchSnapshotSinglePageComplete(t *testing.T) {
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
 		TenantID: tenantID,
 		TracesPages: [][]testutil.TraceData{
-			{{RunID: "r1", TraceID: "t1"}, {RunID: "r2", TraceID: "t2"}},
+			{{ID: "t1", RunID: "r1"}, {ID: "t2", RunID: "r2"}},
 		},
 	})
 	rec, _ := newTestReconciler(t, f, tenantID)
@@ -53,11 +53,11 @@ func TestFetchSnapshotMultiPageComplete(t *testing.T) {
 	tenantID := mustParseUUIDLive(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	p1 := make([]testutil.TraceData, 200)
 	for i := range p1 {
-		p1[i] = testutil.TraceData{RunID: "r", TraceID: "t", Status: "running"}
+		p1[i] = testutil.TraceData{ID: "t", RunID: "r", Status: "running"}
 	}
 	p2 := make([]testutil.TraceData, 50)
 	for i := range p2 {
-		p2[i] = testutil.TraceData{RunID: "r", TraceID: "t", Status: "running"}
+		p2[i] = testutil.TraceData{ID: "t", RunID: "r", Status: "running"}
 	}
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
 		TenantID:    tenantID,
@@ -82,7 +82,7 @@ func TestFetchSnapshotCapExceedsIncomplete(t *testing.T) {
 	for i := 0; i < 26; i++ {
 		page := make([]testutil.TraceData, 200)
 		for j := range page {
-			page[j] = testutil.TraceData{RunID: "r", TraceID: "t", Status: "running"}
+			page[j] = testutil.TraceData{ID: "t", RunID: "r", Status: "running"}
 		}
 		pages = append(pages, page)
 	}

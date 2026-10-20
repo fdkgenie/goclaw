@@ -4,7 +4,10 @@
 // grace-period pruning, tombstones, and exact/approx quality tags.
 package live
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // RunClass describes how a live run is known.
 const (
@@ -42,6 +45,12 @@ type LiveKPI struct {
 }
 
 // TraceData is a trace record from a gateway trace snapshot.
+//
+// The gateway identifies a trace by "id" (store.TraceData.ID serialises the
+// uuid under that name); the dashboard used to decode "trace_id", which no
+// gateway payload carries. With an empty trace id every run-less trace
+// collapsed onto the key "trace:", so two distinct running traces were
+// counted as one.
 type TraceData struct {
 	RunID     string    `json:"run_id"`
 	TraceID   string    `json:"trace_id"`
@@ -50,4 +59,40 @@ type TraceData struct {
 	TeamID    string    `json:"team_id,omitempty"`
 	RunKind   string    `json:"run_kind,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+// UnmarshalJSON decodes a gateway trace row.
+//
+// "id" is the gateway's trace identifier (store.TraceData.ID). "trace_id" is
+// accepted as a fallback for payloads produced by other emitters, so a trace
+// is never decoded with an empty id.
+func (t *TraceData) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		ID        string    `json:"id"`
+		TraceID   string    `json:"trace_id"`
+		RunID     string    `json:"run_id"`
+		Status    string    `json:"status"`
+		AgentID   string    `json:"agent_id"`
+		TeamID    string    `json:"team_id"`
+		RunKind   string    `json:"run_kind"`
+		UpdatedAt time.Time `json:"updated_at"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	t.TraceID = wire.ID
+	if t.TraceID == "" {
+		t.TraceID = wire.TraceID
+	}
+	t.RunID = wire.RunID
+	t.Status = wire.Status
+	t.AgentID = wire.AgentID
+	t.TeamID = wire.TeamID
+	t.RunKind = wire.RunKind
+	t.UpdatedAt = wire.UpdatedAt
+	if t.UpdatedAt.IsZero() {
+		t.UpdatedAt = wire.CreatedAt
+	}
+	return nil
 }

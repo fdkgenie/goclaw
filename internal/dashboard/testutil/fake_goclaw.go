@@ -17,10 +17,12 @@ import (
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
-// TraceData is a minimal trace record the fake returns for /v1/traces.
+// TraceData is a minimal trace record the fake returns for /v1/traces. The
+// field names mirror the gateway store.TraceData payload: the trace uuid is
+// serialised as "id", not "trace_id".
 type TraceData struct {
+	ID        string    `json:"id"`
 	RunID     string    `json:"run_id"`
-	TraceID   string    `json:"trace_id"`
 	Status    string    `json:"status"`
 	TenantID  string    `json:"tenant_id"`
 	UpdatedAt time.Time `json:"updated_at"`

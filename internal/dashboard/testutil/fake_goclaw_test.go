@@ -173,8 +173,8 @@ func TestFakeGoClawTracesPagination(t *testing.T) {
 	f := NewFakeGoClaw(t, Config{
 		TenantID: tenantID,
 		TracesPages: [][]TraceData{
-			{{RunID: "r1", TraceID: "t1"}, {RunID: "r2", TraceID: "t2"}},
-			{{RunID: "r3", TraceID: "t3"}},
+			{{ID: "t1", RunID: "r1"}, {ID: "t2", RunID: "r2"}},
+			{{ID: "t3", RunID: "r3"}},
 		},
 	})
 	resp, err := http.Get(f.URL() + "/v1/traces?offset=0&limit=1")
