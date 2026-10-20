@@ -197,8 +197,18 @@ func TestTraceStatusTerminalDeletesAndTombstones(t *testing.T) {
 	if e := s.entries[traceKey("t1")]; e == nil {
 		t.Fatal("expected trace-keyed entry")
 	}
+	// Non-terminal status update never removes a running trace.
+	running := event("", "t1", "trace.status", "", "")
+	running.Status = "running"
+	s.ApplyEvent(running)
+	if e := s.entries[traceKey("t1")]; e == nil {
+		t.Fatal("running trace.status removed the trace entry")
+	}
+
 	// Terminal trace.status deletes it and tombstones by trace id.
-	s.ApplyEvent(event("", "t1", "trace.status", "", ""))
+	terminal := event("", "t1", "trace.status", "", "")
+	terminal.Status = "completed"
+	s.ApplyEvent(terminal)
 	if e := s.entries[traceKey("t1")]; e != nil {
 		t.Fatal("trace entry not deleted by terminal trace.status")
 	}

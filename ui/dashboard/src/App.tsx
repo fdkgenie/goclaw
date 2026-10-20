@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { apiGet, apiPost } from "./api/client";
 import { useSSE } from "./api/sse";
+import type { LiveKPI } from "./api/types";
 import { OverviewPage } from "./pages/OverviewPage";
 import { t } from "./i18n";
 
@@ -81,12 +82,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
 
 function AppShell({ onLogout }: { onLogout: () => void }) {
   const [page, setPage] = useState("overview");
-  const { snapshot, version, stale } = useSSE<{ active_runs_total: number }>("/api/overview", {
-    active_runs_traced: 0,
-    active_runs_untraced: 0,
-    active_runs_total: 0,
-    quality: "exact",
-  });
+  const { snapshot, version, stale } = useSSE<LiveKPI>();
 
   useEffect(() => {
     const iv = setInterval(() => {

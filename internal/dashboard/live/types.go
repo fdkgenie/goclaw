@@ -20,25 +20,25 @@ const (
 
 // LiveEntry is the in-memory representation of a single live run.
 type LiveEntry struct {
-	Key          string // "run:<runId>" or "trace:<traceId>"
-	RunID        string
-	TraceID      string
-	AgentID      string
-	TeamID       string
-	RunKind      string
-	Class        string // ClassTraced or ClassEventOnly
-	MissingCount int
-	Unverified   bool
-	CurrentTool  string
-	LastEventAt  time.Time
+	Key          string    `json:"key"`
+	RunID        string    `json:"run_id"`
+	TraceID      string    `json:"trace_id"`
+	AgentID      string    `json:"agent_id"`
+	TeamID       string    `json:"team_id"`
+	RunKind      string    `json:"run_kind"`
+	Class        string    `json:"class"` // ClassTraced or ClassEventOnly
+	MissingCount int       `json:"missing_count"`
+	Unverified   bool      `json:"unverified"`
+	CurrentTool  string    `json:"current_tool"`
+	LastEventAt  time.Time `json:"last_event_at"`
 }
 
 // LiveKPI aggregates live run counts with a quality tag.
 type LiveKPI struct {
-	ActiveRunsTraced   int
-	ActiveRunsUntraced int
-	ActiveRunsTotal    int
-	Quality            string // QualityExact or QualityApprox
+	ActiveRunsTraced   int    `json:"active_runs_traced"`
+	ActiveRunsUntraced int    `json:"active_runs_untraced"`
+	ActiveRunsTotal    int    `json:"active_runs_total"`
+	Quality            string `json:"quality"` // QualityExact or QualityApprox
 }
 
 // TraceData is a trace record from a gateway trace snapshot.

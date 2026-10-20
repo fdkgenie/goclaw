@@ -1,70 +1,66 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { apiGet } from "./client";
-import type { Delta, Snapshot } from "./types";
+import { useEffect, useRef, useState } from "react";
 
-export interface UseSSEResult<T extends { version: number }> {
+export interface UseSSEResult<T> {
   snapshot: T | null;
   version: number | null;
   stale: boolean;
 }
 
-export function useSSE<T extends { version: number }>(
-  path: string,
-  initial: T,
-): UseSSEResult<T> {
+interface StreamEnvelope<T> {
+  event: "snapshot" | "delta" | "keepalive" | "down";
+  data: {
+    version?: number;
+    kpi?: T;
+  } | null;
+}
+
+export function useSSE<T>(endpoint = "/api/stream"): UseSSEResult<T> {
   const [snapshot, setSnapshot] = useState<T | null>(null);
   const [version, setVersion] = useState<number | null>(null);
   const [stale, setStale] = useState(false);
   const versionRef = useRef<number | null>(null);
 
   useEffect(() => {
-    let es: EventSource | null = null;
     let cancelled = false;
+    const es = new EventSource(endpoint);
 
-    const init = async () => {
-      try {
-        const snap = (await apiGet<T>(`${path}?snapshot=1`)) as Snapshot & T;
-        if (!cancelled) {
-          setSnapshot(snap);
-          setVersion(snap.version);
-          versionRef.current = snap.version;
-          setStale(false);
-        }
-      } catch {
-        // snapshot fetch failed; stream will still deliver deltas
-      }
-    };
-    init();
-
-    es = new EventSource(`${path}?stream=1`);
     es.onmessage = (e) => {
       try {
-        const delta = JSON.parse(e.data) as Delta & { data: T };
-        if (delta.version != null && versionRef.current != null) {
-          if (delta.version <= versionRef.current) {
+        const msg = JSON.parse(e.data) as StreamEnvelope<T>;
+        if (msg.event === "snapshot") {
+          if (cancelled || !msg.data) return;
+          const nextVersion = msg.data.version ?? 0;
+          versionRef.current = nextVersion;
+          setVersion(nextVersion);
+          if (msg.data.kpi) setSnapshot(msg.data.kpi);
+          setStale(false);
+          return;
+        }
+        if (msg.event === "delta") {
+          if (cancelled || !msg.data) return;
+          const nextVersion = msg.data.version ?? 0;
+          if (versionRef.current != null && nextVersion <= versionRef.current) {
             return; // stale/duplicate delta
           }
-        }
-        if (!cancelled && delta.data) {
-          setSnapshot((prev) => ({ ...prev, ...delta.data }));
-          setVersion(delta.version);
-          versionRef.current = delta.version;
+          versionRef.current = nextVersion;
+          setVersion(nextVersion);
+          if (msg.data.kpi) setSnapshot(msg.data.kpi);
           setStale(false);
         }
       } catch {
-        // ignore malformed delta
+        // ignore malformed frames
       }
     };
+
     es.onerror = () => {
       if (!cancelled) setStale(true);
-      es?.close();
     };
 
     return () => {
       cancelled = true;
-      es?.close();
+      es.close();
     };
-  }, [path]);
+  }, [endpoint]);
 
   return { snapshot, version, stale };
 }

@@ -51,7 +51,9 @@ type AgentEventPayload struct {
 	TraceID   string    `json:"trace_id,omitempty"`
 	AgentID   string    `json:"agent_id,omitempty"`
 	TeamID    string    `json:"team_id,omitempty"`
+	RunKind   string    `json:"run_kind,omitempty"`
 	Event     string    `json:"event"`
+	Status    string    `json:"status,omitempty"`
 	Tool      string    `json:"tool,omitempty"`
 	Timestamp time.Time `json:"timestamp,omitempty"`
 }

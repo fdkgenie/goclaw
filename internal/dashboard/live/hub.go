@@ -20,12 +20,14 @@ type Delta struct {
 	Version uint64      `json:"version"`
 	Kind    string      `json:"kind"` // "event", "merge", "keepalive", "down"
 	Payload interface{} `json:"payload,omitempty"`
+	KPI     *LiveKPI    `json:"kpi,omitempty"`
 }
 
 // Snapshot is the initial state sent to a new SSE subscriber.
 type Snapshot struct {
 	Version uint64       `json:"version"`
 	Entries []*LiveEntry `json:"entries"`
+	KPI     LiveKPI      `json:"kpi"`
 }
 
 // Hub fans out live state changes to SSE subscribers. Subscribe snapshot
@@ -57,6 +59,7 @@ func (h *Hub) Subscribe() (Snapshot, chan Delta, func()) {
 	snap := Snapshot{
 		Version: h.version,
 		Entries: h.state.Snapshot(),
+		KPI:     h.state.ComputeKPI(),
 	}
 	ch := make(chan Delta, subscriberChannelCap)
 	h.subscribers[ch] = struct{}{}
@@ -74,16 +77,7 @@ func (h *Hub) Subscribe() (Snapshot, chan Delta, func()) {
 func (h *Hub) PublishDelta(delta Delta) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.version++
-	delta.Version = h.version
-	for ch := range h.subscribers {
-		select {
-		case ch <- delta:
-		default:
-			delete(h.subscribers, ch)
-			close(ch)
-		}
-	}
+	h.publishLocked(delta)
 }
 
 // ApplyAndPublish applies a state mutation and publishes the resulting delta
@@ -105,10 +99,25 @@ func (h *Hub) MergeAndPublish(traces []TraceData, complete bool) {
 	h.publishLocked(Delta{Kind: "merge", Payload: map[string]any{"complete": complete, "count": len(traces)}})
 }
 
+// ReplayAndMerge atomically replays buffered events, merges a trace snapshot,
+// and publishes a merge delta. Both mutations and publication happen under the
+// hub lock, preserving snapshot+subscribe atomicity.
+func (h *Hub) ReplayAndMerge(events []goclaw.AgentEventPayload, traces []TraceData, complete bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, evt := range events {
+		h.state.ApplyEvent(evt)
+	}
+	h.state.MergeSnapshot(traces, complete)
+	h.publishLocked(Delta{Kind: "merge", Payload: map[string]any{"complete": complete, "count": len(traces)}})
+}
+
 // publishLocked assumes h.mu is held.
 func (h *Hub) publishLocked(delta Delta) {
 	h.version++
 	delta.Version = h.version
+	kpi := h.state.ComputeKPI()
+	delta.KPI = &kpi
 	for ch := range h.subscribers {
 		select {
 		case ch <- delta:

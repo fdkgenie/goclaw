@@ -17,6 +17,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/live"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/server"
+	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
 const (
@@ -73,8 +74,31 @@ func run(ctx context.Context, cfg *config.Config) error {
 
 	// Live state + reconciler + SSE hub.
 	state := live.NewState()
-	reconciler := live.NewReconciler(state, httpClient)
 	hub := live.NewHub(state)
+	reconciler := live.NewReconciler(state, httpClient, hub)
+
+	// Wire the gateway event stream into the live pipeline:
+	// WS event -> live state (via hub) -> SSE delta.
+	agentEvents := make(chan *goclaw.EventFrame, 256)
+	traceEvents := make(chan *goclaw.EventFrame, 256)
+	wsClient.Subscribe(protocol.EventAgent, agentEvents)
+	wsClient.Subscribe(protocol.EventTraceStatusChanged, traceEvents)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame := <-agentEvents:
+				if evt, ok := goclaw.AgentEventFromFrame(frame); ok {
+					reconciler.HandleEvent(evt)
+				}
+			case frame := <-traceEvents:
+				if evt, ok := goclaw.TraceStatusFromFrame(frame); ok {
+					reconciler.HandleEvent(evt)
+				}
+			}
+		}
+	}()
 
 	// Start background reconcile loop.
 	go reconciler.Run(ctx)

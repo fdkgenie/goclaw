@@ -29,19 +29,54 @@ type tracesResponse struct {
 type Reconciler struct {
 	state *State
 	http  *goclaw.HTTPClient
+	hub   *Hub
 
 	// eventBuf holds WS events received while a snapshot is being fetched.
 	eventBuf []goclaw.AgentEventPayload
 	bufMu    sync.Mutex
+
+	// epochMu serializes event application with the snapshot merge, so an
+	// event received during an epoch is either buffered before the merge or
+	// applied after it.
+	epochMu     sync.Mutex
+	epochActive bool
+	overflow    bool
 }
 
-// NewReconciler creates a Reconciler wired to state and the gateway HTTP client.
-func NewReconciler(state *State, httpClient *goclaw.HTTPClient) *Reconciler {
+// NewReconciler creates a Reconciler wired to state, the gateway HTTP client,
+// and the SSE hub used to publish live mutations.
+func NewReconciler(state *State, httpClient *goclaw.HTTPClient, hub *Hub) *Reconciler {
+	if hub == nil {
+		hub = NewHub(state)
+	}
 	return &Reconciler{
 		state:    state,
 		http:     httpClient,
+		hub:      hub,
 		eventBuf: make([]goclaw.AgentEventPayload, 0, eventBufferCap),
 	}
+}
+
+// HandleEvent applies a live WS event. During a reconcile epoch the event is
+// buffered for replay before the snapshot merge; otherwise it is applied and
+// published atomically through the hub.
+func (r *Reconciler) HandleEvent(evt goclaw.AgentEventPayload) {
+	r.epochMu.Lock()
+	defer r.epochMu.Unlock()
+
+	r.bufMu.Lock()
+	if r.epochActive && !r.overflow {
+		if len(r.eventBuf) >= eventBufferCap {
+			r.overflow = true
+		} else {
+			r.eventBuf = append(r.eventBuf, evt)
+			r.bufMu.Unlock()
+			return
+		}
+	}
+	r.bufMu.Unlock()
+
+	r.hub.ApplyAndPublish(evt)
 }
 
 // BufferEvent enqueues a WS event received while a snapshot is in flight.
@@ -50,6 +85,7 @@ func (r *Reconciler) BufferEvent(evt goclaw.AgentEventPayload) bool {
 	r.bufMu.Lock()
 	defer r.bufMu.Unlock()
 	if len(r.eventBuf) >= eventBufferCap {
+		r.overflow = true
 		return false
 	}
 	r.eventBuf = append(r.eventBuf, evt)
@@ -101,19 +137,36 @@ func (r *Reconciler) FetchSnapshot(ctx context.Context) ([]TraceData, bool) {
 	return all, false
 }
 
-// RunEpoch executes one reconcile cycle: drain buffered events, fetch the
-// snapshot, replay buffered events (in order), then merge into State.
+// RunEpoch executes one reconcile cycle: mark the epoch active so live events
+// buffer, fetch the snapshot, then replay buffered events and merge the
+// snapshot atomically through the hub.
 func (r *Reconciler) RunEpoch(ctx context.Context) bool {
-	buf := r.Drain()
+	r.epochMu.Lock()
+	r.bufMu.Lock()
+	r.epochActive = true
+	r.bufMu.Unlock()
+	r.epochMu.Unlock()
+
 	traces, complete := r.FetchSnapshot(ctx)
 
-	// Replay buffered events in order before merging the snapshot, so events
-	// received during the fetch are not lost.
-	for _, evt := range buf {
-		r.state.ApplyEvent(evt)
+	r.epochMu.Lock()
+	defer r.epochMu.Unlock()
+
+	r.bufMu.Lock()
+	r.epochActive = false
+	buf := r.eventBuf
+	r.eventBuf = make([]goclaw.AgentEventPayload, 0, eventBufferCap)
+	overflow := r.overflow
+	r.overflow = false
+	r.bufMu.Unlock()
+
+	if overflow {
+		// Buffer overflow means events were dropped: force a resync and never
+		// run negative pruning on this epoch.
+		complete = false
 	}
 
-	r.state.MergeSnapshot(traces, complete)
+	r.hub.ReplayAndMerge(buf, traces, complete)
 	return complete
 }
 

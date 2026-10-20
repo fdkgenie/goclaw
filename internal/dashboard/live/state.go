@@ -47,6 +47,17 @@ func entryKey(tr TraceData) string {
 
 func now() time.Time { return time.Now() }
 
+// isTerminalTraceStatus reports whether a trace status ends the trace.
+// Mirrors the gateway trace store terminal statuses.
+func isTerminalTraceStatus(status string) bool {
+	switch status {
+	case "completed", "error", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
 // ApplyEvent applies a single agent lifecycle or trace status event to the
 // live state.
 //
@@ -78,8 +89,12 @@ func (s *State) ApplyEvent(evt goclaw.AgentEventPayload) {
 
 	case "trace.status":
 		// Terminal trace status: delete the trace entry and tombstone it so a
-		// later snapshot cannot resurrect a finished trace.
+		// later snapshot cannot resurrect a finished trace. Non-terminal
+		// status updates must not remove a running trace.
 		if evt.TraceID == "" {
+			return
+		}
+		if evt.Status != "" && !isTerminalTraceStatus(evt.Status) {
 			return
 		}
 		tk := traceKey(evt.TraceID)

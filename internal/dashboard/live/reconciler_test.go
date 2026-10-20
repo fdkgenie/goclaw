@@ -15,7 +15,7 @@ func newTestReconciler(t *testing.T, f *testutil.FakeGoClaw, tenantID uuid.UUID)
 	t.Helper()
 	state := NewState()
 	httpClient := goclaw.NewHTTPClient(f.URL(), "ak", tenantID.String(), 0)
-	rec := NewReconciler(state, httpClient)
+	rec := NewReconciler(state, httpClient, NewHub(state))
 	return rec, state
 }
 
@@ -126,6 +126,40 @@ func TestBufferReplayBeforeMerge(t *testing.T) {
 		t.Fatal("buffered run.started not applied before merge")
 	} else if e.Class != ClassEventOnly {
 		t.Errorf("class = %s, want event_only", e.Class)
+	}
+}
+
+func TestHandleEventPublishesDeltaToSubscriber(t *testing.T) {
+	state := NewState()
+	hub := NewHub(state)
+	rec := NewReconciler(state, nil, hub)
+
+	snap, ch, unsub := hub.Subscribe()
+	defer unsub()
+
+	rec.HandleEvent(goclaw.AgentEventPayload{
+		RunID:   "r1",
+		AgentID: "a1",
+		Event:   "run.started",
+	})
+
+	select {
+	case delta := <-ch:
+		if delta.Kind != "event" {
+			t.Fatalf("delta kind = %q, want event", delta.Kind)
+		}
+		if delta.Version <= snap.Version {
+			t.Fatalf("delta version %d not > snapshot %d", delta.Version, snap.Version)
+		}
+		if delta.KPI == nil || delta.KPI.ActiveRunsUntraced != 1 {
+			t.Fatalf("delta KPI = %+v, want one untraced run", delta.KPI)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber did not receive delta for live event")
+	}
+
+	if state.Len() != 1 {
+		t.Fatalf("state entries = %d, want 1", state.Len())
 	}
 }
 
