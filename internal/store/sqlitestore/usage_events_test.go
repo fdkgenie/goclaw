@@ -364,12 +364,82 @@ func TestSQLiteUsageEventStore_RefreshDeletesLegacyBucketFormats(t *testing.T) {
 		}
 	}
 	seedLegacy("2026-06-12T11:00:00Z")
-	seedLegacy("2026-06-12T11:00:00+07:00")
+	seedLegacy("2026-06-12T18:00:00+07:00") // same instant as 11:00Z
 
 	if err := eventStore.RefreshEventRollupHour(ctx, bucket); err != nil {
 		t.Fatalf("RefreshEventRollupHour: %v", err)
 	}
 	if rows, cost, _ := sqliteRollupSnapshot(t, db, store.MasterTenantID, bucket); rows != 1 || cost != 2 {
 		t.Fatalf("legacy formats survived refresh: rows=%d cost=%v, want rows=1 cost=2", rows, cost)
+	}
+}
+
+func TestSQLiteUsageEventStore_RefreshIncludesMixedEventTimeFormats(t *testing.T) {
+	db := openTestDB(t)
+	if err := EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	eventStore := NewSQLiteUsageEventStore(db)
+	ctx := store.WithTenantID(context.Background(), store.MasterTenantID)
+	bucket := time.Date(2026, 6, 12, 11, 0, 0, 0, time.UTC)
+
+	// Driver form, written through the store.
+	if err := eventStore.InsertEvent(ctx, &store.UsageEvent{
+		ID: uuid.New(), TenantID: store.MasterTenantID, EventTime: bucket.Add(5 * time.Minute), BucketHour: bucket,
+		EventType: "tool_call", ResourceType: "tool", ResourceName: "bash", CostUSD: 2, CallCount: 1,
+	}); err != nil {
+		t.Fatalf("InsertEvent: %v", err)
+	}
+	// Legacy RFC3339 Z form in the same bucket.
+	if _, err := db.Exec(`INSERT INTO usage_events
+		(id, tenant_id, event_time, bucket_hour, event_type, resource_type, resource_name, status, cost_usd, call_count)
+		VALUES (?, ?, '2026-06-12T11:10:00Z', '2026-06-12T11:00:00Z', 'tool_call', 'tool', 'bash', 'completed', 3, 1)`,
+		uuid.NewString(), store.MasterTenantID.String()); err != nil {
+		t.Fatalf("seed RFC3339 event: %v", err)
+	}
+
+	if err := eventStore.RefreshEventRollupHour(ctx, bucket); err != nil {
+		t.Fatalf("RefreshEventRollupHour: %v", err)
+	}
+	if rows, cost, _ := sqliteRollupSnapshot(t, db, store.MasterTenantID, bucket); rows != 1 || cost != 5 {
+		t.Fatalf("mixed event formats rollups = rows=%d cost=%v, want rows=1 cost=5", rows, cost)
+	}
+}
+
+func TestSQLiteUsageEventStore_RefreshNormalizesRFC3339Offset(t *testing.T) {
+	db := openTestDB(t)
+	if err := EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	eventStore := NewSQLiteUsageEventStore(db)
+	ctx := store.WithTenantID(context.Background(), store.MasterTenantID)
+	bucket := time.Date(2026, 6, 12, 11, 0, 0, 0, time.UTC)
+
+	if err := eventStore.InsertEvent(ctx, &store.UsageEvent{
+		ID: uuid.New(), TenantID: store.MasterTenantID, EventTime: bucket.Add(5 * time.Minute), BucketHour: bucket,
+		EventType: "tool_call", ResourceType: "tool", ResourceName: "bash", CostUSD: 2, CallCount: 1,
+	}); err != nil {
+		t.Fatalf("InsertEvent: %v", err)
+	}
+	// 18:10+07:00 == 11:10Z. Both event_time and bucket_hour carry the offset.
+	if _, err := db.Exec(`INSERT INTO usage_events
+		(id, tenant_id, event_time, bucket_hour, event_type, resource_type, resource_name, status, cost_usd, call_count)
+		VALUES (?, ?, '2026-06-12T18:10:00+07:00', '2026-06-12T18:00:00+07:00', 'tool_call', 'tool', 'bash', 'completed', 4, 1)`,
+		uuid.NewString(), store.MasterTenantID.String()); err != nil {
+		t.Fatalf("seed RFC3339 offset event: %v", err)
+	}
+
+	if err := eventStore.RefreshEventRollupHour(ctx, bucket); err != nil {
+		t.Fatalf("RefreshEventRollupHour: %v", err)
+	}
+	if rows, cost, _ := sqliteRollupSnapshot(t, db, store.MasterTenantID, bucket); rows != 1 || cost != 6 {
+		t.Fatalf("offset event rollups = rows=%d cost=%v, want rows=1 cost=6", rows, cost)
+	}
+	var storedBucket sqliteTime
+	if err := db.QueryRow(`SELECT bucket_hour FROM usage_event_rollups WHERE tenant_id = ?`, store.MasterTenantID.String()).Scan(&storedBucket); err != nil {
+		t.Fatalf("query rollup bucket_hour: %v", err)
+	}
+	if !storedBucket.Time.Equal(bucket) {
+		t.Fatalf("rollup bucket_hour = %s, want UTC-normalized %s", storedBucket.Time, bucket)
 	}
 }

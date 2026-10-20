@@ -104,8 +104,22 @@ func TestSQLiteMigration60CutoffSkipsOpenHour(t *testing.T) {
 			t.Fatalf("insert usage_event: %v", err)
 		}
 	}
+	ict := time.FixedZone("ICT", 7*60*60)
+	insertOffset := func(bucket time.Time, cost float64) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO usage_events
+			(id, tenant_id, event_time, bucket_hour, event_type, resource_type, resource_name, cost_usd, call_count)
+			VALUES (?, ?, ?, ?, 'tool_call', 'tool', 'bash', ?, 1)`,
+			uuid.New().String(), tenantID.String(),
+			bucket.Add(5*time.Minute).In(ict).Format(time.RFC3339),
+			bucket.In(ict).Format(time.RFC3339), cost); err != nil {
+			t.Fatalf("insert offset usage_event: %v", err)
+		}
+	}
 	insert(closed, 2)
+	insertOffset(closed, 3)
 	insert(open, 8)
+	insertOffset(open, 9)
 
 	if err := EnsureSchema(db); err != nil {
 		t.Fatalf("EnsureSchema: %v", err)
@@ -124,8 +138,8 @@ func TestSQLiteMigration60CutoffSkipsOpenHour(t *testing.T) {
 		}
 		return rows, cost
 	}
-	if rows, cost := count(closed); rows != 1 || cost != 2 {
-		t.Fatalf("closed-hour rollups = (%d,%v), want (1,2)", rows, cost)
+	if rows, cost := count(closed); rows != 1 || cost != 5 {
+		t.Fatalf("closed-hour rollups = (%d,%v), want (1,5)", rows, cost)
 	}
 	if rows, _ := count(open); rows != 0 {
 		t.Fatalf("open-hour rollups = %d, want 0 (migration cutoff)", rows)
