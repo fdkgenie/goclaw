@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bufio"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,14 +12,124 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/config"
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/live"
 )
 
 func testRouter(t *testing.T) *Router {
 	t.Helper()
+	router, _, _ := testRouterWithHub(t)
+	return router
+}
+
+func testRouterWithHub(t *testing.T) (*Router, *live.Hub, *SessionManager) {
+	t.Helper()
 	cfg := &config.Config{DashboardPassword: "secret"}
 	sm := NewSessionManager(time.Hour)
 	rl := NewRateLimiter(rate.Every(time.Minute), 5)
-	return NewRouter(cfg, nil, nil, nil, nil, sm, rl)
+	state := live.NewState()
+	hub := live.NewHub(state)
+	return NewRouter(cfg, state, nil, nil, hub, sm, rl), hub, sm
+}
+
+func streamStatus(t *testing.T, router *Router, cookie *http.Cookie) int {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil)
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w.Code
+}
+
+func TestStreamRequiresSession(t *testing.T) {
+	t.Run("anonymous", func(t *testing.T) {
+		router, _, _ := testRouterWithHub(t)
+		if got := streamStatus(t, router, nil); got != http.StatusUnauthorized {
+			t.Fatalf("anonymous status = %d, want 401", got)
+		}
+	})
+
+	t.Run("invalid session", func(t *testing.T) {
+		router, _, _ := testRouterWithHub(t)
+		cookie := &http.Cookie{Name: sessionCookieName, Value: "not-a-session"}
+		if got := streamStatus(t, router, cookie); got != http.StatusUnauthorized {
+			t.Fatalf("invalid session status = %d, want 401", got)
+		}
+	})
+
+	t.Run("expired session", func(t *testing.T) {
+		expired := NewSessionManager(-time.Second)
+		tok := expired.Create()
+		state := live.NewState()
+		router := NewRouter(&config.Config{DashboardPassword: "secret"}, state, nil, nil, live.NewHub(state), expired, NewRateLimiter(rate.Every(time.Minute), 5))
+		cookie := &http.Cookie{Name: sessionCookieName, Value: tok}
+		if got := streamStatus(t, router, cookie); got != http.StatusUnauthorized {
+			t.Fatalf("expired session status = %d, want 401", got)
+		}
+	})
+}
+
+func TestStreamAuthenticatedReceivesFrame(t *testing.T) {
+	router, hub, sm := testRouterWithHub(t)
+	tok := sm.Create()
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/stream", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: tok})
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status = %d, want 200", resp.StatusCode)
+	}
+
+	lines := make(chan string, 32)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+		close(lines)
+	}()
+
+	waitFor := func(substr string) string {
+		t.Helper()
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					t.Fatalf("stream closed before %q", substr)
+				}
+				if strings.Contains(line, substr) {
+					return line
+				}
+			case <-ctx.Done():
+				t.Fatalf("timeout waiting for %q", substr)
+			}
+		}
+	}
+
+	waitFor(`"snapshot"`)
+	hub.ApplyAndPublish(goclaw.AgentEventPayload{RunID: "r1", AgentID: "a1", Event: "run.started"})
+	line := waitFor(`"delta"`)
+	if !strings.Contains(line, `run.started`) {
+		t.Fatalf("delta frame missing event payload: %s", line)
+	}
 }
 
 func postJSON(t *testing.T, r *Router, path, body string) *httptest.ResponseRecorder {

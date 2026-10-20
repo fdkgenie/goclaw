@@ -45,7 +45,7 @@ func originAllowed(origin, host string) bool {
 func sessionMiddleware(sm *SessionManager, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if path == "/api/login" || path == "/api/logout" || strings.HasPrefix(path, "/api/stream") {
+		if path == "/api/login" || path == "/api/logout" {
 			next.ServeHTTP(w, r)
 			return
 		}
