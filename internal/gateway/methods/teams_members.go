@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 
-
 	"github.com/google/uuid"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
@@ -93,7 +92,8 @@ func (m *TeamsMethods) handleAddMember(ctx context.Context, client *gateway.Clie
 	// Emit team.member.added event
 	if m.msgBus != nil {
 		m.msgBus.Broadcast(bus.Event{
-			Name: protocol.EventTeamMemberAdded,
+			Name:     protocol.EventTeamMemberAdded,
+			TenantID: store.TenantIDFromContext(ctx),
 			Payload: protocol.TeamMemberAddedPayload{
 				TeamID:      teamID.String(),
 				TeamName:    team.Name,
@@ -177,7 +177,8 @@ func (m *TeamsMethods) handleRemoveMember(ctx context.Context, client *gateway.C
 	// Emit team.member.removed event
 	if m.msgBus != nil && removedAgent != nil {
 		m.msgBus.Broadcast(bus.Event{
-			Name: protocol.EventTeamMemberRemoved,
+			Name:     protocol.EventTeamMemberRemoved,
+			TenantID: store.TenantIDFromContext(ctx),
 			Payload: protocol.TeamMemberRemovedPayload{
 				TeamID:      teamID.String(),
 				TeamName:    team.Name,
@@ -188,4 +189,3 @@ func (m *TeamsMethods) handleRemoveMember(ctx context.Context, client *gateway.C
 		})
 	}
 }
-

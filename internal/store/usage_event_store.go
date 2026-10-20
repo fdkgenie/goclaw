@@ -65,6 +65,7 @@ type UsageEventQuery struct {
 	From         time.Time
 	To           time.Time
 	AgentID      *uuid.UUID
+	TeamID       *uuid.UUID
 	Channel      string
 	EventType    string
 	ResourceType string
@@ -131,6 +132,7 @@ type UsageEventRollup struct {
 	ResourceName      string     `json:"resource_name" db:"resource_name"`
 	Source            string     `json:"source" db:"source"`
 	AgentID           *uuid.UUID `json:"agent_id,omitempty" db:"agent_id"`
+	TeamID            *uuid.UUID `json:"team_id,omitempty" db:"team_id"`
 	Channel           string     `json:"channel" db:"channel"`
 	Provider          string     `json:"provider" db:"provider"`
 	Model             string     `json:"model" db:"model"`

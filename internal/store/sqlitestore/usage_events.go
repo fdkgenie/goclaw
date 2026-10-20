@@ -24,7 +24,11 @@ func NewSQLiteUsageEventStore(db *sql.DB) *SQLiteUsageEventStore {
 
 const sqliteUsageEventFieldCount = 31
 const sqliteUsageEventBatchSize = 30
-const sqliteUsageRollupFieldCount = 24
+const sqliteUsageRollupFieldCount = 25
+
+type contextExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
 
 func (s *SQLiteUsageEventStore) InsertEvent(ctx context.Context, event *store.UsageEvent) error {
 	if event == nil {
@@ -81,17 +85,51 @@ func (s *SQLiteUsageEventStore) insertBatch(ctx context.Context, events []store.
 	return err
 }
 
+// sqliteNormalizedTimeExpr returns a UTC datetime() expression that accepts all
+// time formats written by this store: Go driver space form with zone suffix
+// ("2026-06-12 11:00:00 +0000 UTC"), RFC3339 ("2026-06-12T11:00:00Z"), RFC3339
+// with offset, and plain "YYYY-MM-DD HH:MM:SS". SQLite datetime() rejects the
+// driver's trailing zone name, so convert the numeric offset to +HH:MM first.
+// sqliteCanonicalTime formats a time as the canonical UTC text stored in
+// usage_event_rollups.bucket_hour ("YYYY-MM-DD HH:MM:SS"). Writing this shape on
+// every rollup path keeps the plain bucket_hour range predicates index-usable.
+func sqliteCanonicalTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
+func sqliteNormalizedTimeExpr(column string) string {
+	offsetPos := `20 + CASE WHEN instr(substr(` + column + `, 20), ' +') > 0 THEN instr(substr(` + column + `, 20), ' +') ELSE instr(substr(` + column + `, 20), ' -') END`
+	return `datetime(CASE
+		WHEN substr(` + column + `, 11, 1) = 'T' THEN replace(` + column + `, 'T', ' ')
+		WHEN instr(substr(` + column + `, 20), ' +') > 0 OR instr(substr(` + column + `, 20), ' -') > 0 THEN
+			substr(` + column + `, 1, 19) ||
+			substr(` + column + `, ` + offsetPos + `, 3) || ':' ||
+			substr(` + column + `, ` + offsetPos + ` + 3, 2)
+		ELSE ` + column + `
+	END)`
+}
+
 func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, bucketHour time.Time) error {
 	start := bucketHour.UTC().Truncate(time.Hour)
 	end := start.Add(time.Hour)
-	rows, err := s.db.QueryContext(ctx, `SELECT
+	eventTime := sqliteNormalizedTimeExpr("event_time")
+	bucketTimeExpr := sqliteNormalizedTimeExpr("bucket_hour")
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin rollup tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `SELECT
 		tenant_id,
-		bucket_hour,
+		`+bucketTimeExpr+` AS bucket_hour,
 		event_type,
 		resource_type,
 		resource_name,
 		source,
 		agent_id,
+		team_id,
 		channel,
 		provider,
 		model,
@@ -109,9 +147,9 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		COALESCE(SUM(call_count), 0),
 		COALESCE(SUM(error_count), 0)
 	FROM usage_events
-	WHERE event_time >= ? AND event_time < ?
-	GROUP BY tenant_id, bucket_hour, event_type, resource_type, resource_name, source, agent_id, channel, provider, model, status`,
-		start, end)
+	WHERE `+eventTime+` >= ? AND `+eventTime+` < ?
+	GROUP BY tenant_id, `+bucketTimeExpr+`, event_type, resource_type, resource_name, source, agent_id, team_id, channel, provider, model, status`,
+		start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05"))
 	if err != nil {
 		return fmt.Errorf("aggregate usage event rollup: %w", err)
 	}
@@ -124,7 +162,7 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		var bucketTime sqliteTime
 		if err := rows.Scan(
 			&rollup.TenantID, &bucketTime, &rollup.EventType, &rollup.ResourceType,
-			&rollup.ResourceName, &rollup.Source, &rollup.AgentID, &rollup.Channel,
+			&rollup.ResourceName, &rollup.Source, &rollup.AgentID, &rollup.TeamID, &rollup.Channel,
 			&rollup.Provider, &rollup.Model, &rollup.Status,
 			&rollup.InputTokens, &rollup.OutputTokens, &rollup.TotalTokens,
 			&rollup.CacheReadTokens, &rollup.CacheCreateTokens, &rollup.ThinkingTokens, &rollup.CostUSD,
@@ -135,10 +173,31 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		rollup.BucketHour = bucketTime.Time
 		rollups = append(rollups, rollup)
 	}
+	// Close the read cursor before issuing writes on the same tx/connection.
+	if err := rows.Close(); err != nil {
+		return err
+	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return s.upsertEventRollups(ctx, rollups)
+
+	// Whole-bucket replacement. Stored bucket_hour text is canonical UTC
+	// (YYYY-MM-DD HH:MM:SS) on every write path, so compare plainly to keep
+	// idx_usage_event_rollups_tenant_hour usable.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM usage_event_rollups WHERE bucket_hour = ?`,
+		sqliteCanonicalTime(start),
+	); err != nil {
+		return fmt.Errorf("delete old bucket rollups: %w", err)
+	}
+
+	if len(rollups) > 0 {
+		if err := s.upsertEventRollups(ctx, tx, rollups); err != nil {
+			return fmt.Errorf("insert new rollups: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *SQLiteUsageEventStore) GetLatestEventRollupBucket(ctx context.Context) (*time.Time, error) {
@@ -153,7 +212,7 @@ func (s *SQLiteUsageEventStore) GetLatestEventRollupBucket(ctx context.Context) 
 	return &nt.Time, nil
 }
 
-func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups []store.UsageEventRollup) error {
+func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, q contextExecer, rollups []store.UsageEventRollup) error {
 	if len(rollups) == 0 {
 		return nil
 	}
@@ -163,8 +222,8 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 	for i, rollup := range rollups {
 		vals[i] = placeholderRow
 		args = append(args,
-			rollup.ID, rollup.TenantID, rollup.BucketHour, rollup.EventType, rollup.ResourceType,
-			rollup.ResourceName, rollup.Source, nilUUID(rollup.AgentID), rollup.Channel,
+			rollup.ID, rollup.TenantID, sqliteCanonicalTime(rollup.BucketHour), rollup.EventType, rollup.ResourceType,
+			rollup.ResourceName, rollup.Source, nilUUID(rollup.AgentID), nilUUID(rollup.TeamID), rollup.Channel,
 			rollup.Provider, rollup.Model, rollup.Status, rollup.InputTokens, rollup.OutputTokens,
 			rollup.TotalTokens, rollup.CacheReadTokens, rollup.CacheCreateTokens, rollup.ThinkingTokens,
 			rollup.CostUSD, rollup.DurationMS, rollup.CallCount,
@@ -173,7 +232,7 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 	}
 	query := `INSERT INTO usage_event_rollups (
 		id, tenant_id, bucket_hour, event_type, resource_type, resource_name, source,
-		agent_id, channel, provider, model, status,
+		agent_id, team_id, channel, provider, model, status,
 		input_tokens, output_tokens, total_tokens,
 		cache_read_tokens, cache_create_tokens, thinking_tokens, cost_usd,
 		duration_ms, call_count, error_count, created_at, updated_at
@@ -186,6 +245,7 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 		resource_name,
 		source,
 		COALESCE(agent_id, '00000000-0000-0000-0000-000000000000'),
+		COALESCE(team_id, '00000000-0000-0000-0000-000000000000'),
 		channel,
 		provider,
 		model,
@@ -202,34 +262,12 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, rollups 
 		call_count = excluded.call_count,
 		error_count = excluded.error_count,
 		updated_at = excluded.updated_at`
-	_, err := s.db.ExecContext(ctx, query, args...)
+	_, err := q.ExecContext(ctx, query, args...)
 	return err
 }
 
 func (s *SQLiteUsageEventStore) GetEventTimeSeries(ctx context.Context, q store.UsageEventQuery) ([]store.UsageEventTimeSeries, error) {
-	bucketExpr := "bucket_hour"
-	if q.GroupBy == "day" {
-		bucketExpr = "strftime('%Y-%m-%d 00:00:00', bucket_hour)"
-	}
-	where, args := buildSQLiteUsageEventWhere(ctx, q, "bucket_hour")
-	query := fmt.Sprintf(`SELECT
-		%s AS bucket_time,
-		COALESCE(SUM(call_count), 0),
-		COALESCE(SUM(error_count), 0),
-		COALESCE(SUM(input_tokens), 0),
-		COALESCE(SUM(output_tokens), 0),
-		COALESCE(SUM(total_tokens), 0),
-		COALESCE(SUM(cache_read_tokens), 0),
-		COALESCE(SUM(cache_create_tokens), 0),
-		COALESCE(SUM(thinking_tokens), 0),
-		COALESCE(SUM(cost_usd), 0),
-		CASE WHEN COALESCE(SUM(call_count), 0) > 0
-			THEN COALESCE(SUM(duration_ms * call_count), 0) / SUM(call_count)
-			ELSE 0 END
-	FROM usage_event_rollups
-	%s
-	GROUP BY bucket_time
-	ORDER BY bucket_time`, bucketExpr, where)
+	query, args := sqliteUsageEventTimeSeriesQuery(ctx, q)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -256,39 +294,7 @@ func (s *SQLiteUsageEventStore) GetEventTimeSeries(ctx context.Context, q store.
 }
 
 func (s *SQLiteUsageEventStore) GetEventBreakdown(ctx context.Context, q store.UsageEventQuery) ([]store.UsageEventBreakdown, error) {
-	groupCol := sqliteUsageEventGroupColumn(q.GroupBy)
-	where, args := buildSQLiteUsageEventWhere(ctx, q, "bucket_hour")
-	if where == "" {
-		where = " WHERE 1=1"
-	}
-	limit := q.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 25
-	}
-	args = append(args, limit)
-	query := fmt.Sprintf(`SELECT
-		%s AS key,
-		MIN(event_type),
-		MIN(resource_type),
-		MIN(resource_name),
-		MIN(source),
-		COALESCE(SUM(call_count), 0),
-		COALESCE(SUM(error_count), 0),
-		COALESCE(SUM(input_tokens), 0),
-		COALESCE(SUM(output_tokens), 0),
-		COALESCE(SUM(total_tokens), 0),
-		COALESCE(SUM(cache_read_tokens), 0),
-		COALESCE(SUM(cache_create_tokens), 0),
-		COALESCE(SUM(thinking_tokens), 0),
-		COALESCE(SUM(cost_usd), 0),
-		CASE WHEN COALESCE(SUM(call_count), 0) > 0
-			THEN COALESCE(SUM(duration_ms * call_count), 0) / SUM(call_count)
-			ELSE 0 END
-	FROM usage_event_rollups
-	%s
-	GROUP BY %s
-	ORDER BY SUM(call_count) DESC, key ASC
-	LIMIT ?`, groupCol, where, groupCol)
+	query, args := sqliteUsageEventBreakdownQuery(ctx, q)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -313,8 +319,28 @@ func (s *SQLiteUsageEventStore) GetEventBreakdown(ctx context.Context, q store.U
 }
 
 func (s *SQLiteUsageEventStore) GetEventSummary(ctx context.Context, q store.UsageEventQuery) (*store.UsageEventSummary, error) {
+	query, args := sqliteUsageEventSummaryQuery(ctx, q)
+	var summary store.UsageEventSummary
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&summary.Calls, &summary.Errors, &summary.InputTokens, &summary.OutputTokens,
+		&summary.TotalTokens, &summary.CacheReadTokens, &summary.CacheCreateTokens, &summary.ThinkingTokens,
+		&summary.CostUSD, &summary.AvgDurationMS,
+	); err != nil {
+		return nil, fmt.Errorf("get usage event summary: %w", err)
+	}
+	return &summary, nil
+}
+
+// The rollup query builders below are shared by the store methods and by
+// EXPLAIN QUERY PLAN tests, so index-usage assertions track production SQL.
+func sqliteUsageEventTimeSeriesQuery(ctx context.Context, q store.UsageEventQuery) (string, []any) {
+	bucketExpr := "bucket_hour"
+	if q.GroupBy == "day" {
+		bucketExpr = "strftime('%Y-%m-%d 00:00:00', bucket_hour)"
+	}
 	where, args := buildSQLiteUsageEventWhere(ctx, q, "bucket_hour")
-	query := `SELECT
+	return fmt.Sprintf(`SELECT
+		%s AS bucket_time,
 		COALESCE(SUM(call_count), 0),
 		COALESCE(SUM(error_count), 0),
 		COALESCE(SUM(input_tokens), 0),
@@ -327,16 +353,64 @@ func (s *SQLiteUsageEventStore) GetEventSummary(ctx context.Context, q store.Usa
 		CASE WHEN COALESCE(SUM(call_count), 0) > 0
 			THEN COALESCE(SUM(duration_ms * call_count), 0) / SUM(call_count)
 			ELSE 0 END
-	FROM usage_event_rollups` + where
-	var summary store.UsageEventSummary
-	if err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&summary.Calls, &summary.Errors, &summary.InputTokens, &summary.OutputTokens,
-		&summary.TotalTokens, &summary.CacheReadTokens, &summary.CacheCreateTokens, &summary.ThinkingTokens,
-		&summary.CostUSD, &summary.AvgDurationMS,
-	); err != nil {
-		return nil, fmt.Errorf("get usage event summary: %w", err)
+	FROM usage_event_rollups
+	%s
+	GROUP BY bucket_time
+	ORDER BY bucket_time`, bucketExpr, where), args
+}
+
+func sqliteUsageEventBreakdownQuery(ctx context.Context, q store.UsageEventQuery) (string, []any) {
+	groupCol := sqliteUsageEventGroupColumn(q.GroupBy)
+	where, args := buildSQLiteUsageEventWhere(ctx, q, "bucket_hour")
+	if where == "" {
+		where = " WHERE 1=1"
 	}
-	return &summary, nil
+	limit := q.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	args = append(args, limit)
+	return fmt.Sprintf(`SELECT
+		%s AS key,
+		MIN(event_type),
+		MIN(resource_type),
+		MIN(resource_name),
+		MIN(source),
+		COALESCE(SUM(call_count), 0),
+		COALESCE(SUM(error_count), 0),
+		COALESCE(SUM(input_tokens), 0),
+		COALESCE(SUM(output_tokens), 0),
+		COALESCE(SUM(total_tokens), 0),
+		COALESCE(SUM(cache_read_tokens), 0),
+		COALESCE(SUM(cache_create_tokens), 0),
+		COALESCE(SUM(thinking_tokens), 0),
+		COALESCE(SUM(cost_usd), 0),
+		CASE WHEN COALESCE(SUM(call_count), 0) > 0
+			THEN COALESCE(SUM(duration_ms * call_count), 0) / SUM(call_count)
+			ELSE 0 END
+	FROM usage_event_rollups
+	%s
+	GROUP BY %s
+	ORDER BY SUM(call_count) DESC, key ASC
+	LIMIT ?`, groupCol, where, groupCol), args
+}
+
+func sqliteUsageEventSummaryQuery(ctx context.Context, q store.UsageEventQuery) (string, []any) {
+	where, args := buildSQLiteUsageEventWhere(ctx, q, "bucket_hour")
+	return `SELECT
+		COALESCE(SUM(call_count), 0),
+		COALESCE(SUM(error_count), 0),
+		COALESCE(SUM(input_tokens), 0),
+		COALESCE(SUM(output_tokens), 0),
+		COALESCE(SUM(total_tokens), 0),
+		COALESCE(SUM(cache_read_tokens), 0),
+		COALESCE(SUM(cache_create_tokens), 0),
+		COALESCE(SUM(thinking_tokens), 0),
+		COALESCE(SUM(cost_usd), 0),
+		CASE WHEN COALESCE(SUM(call_count), 0) > 0
+			THEN COALESCE(SUM(duration_ms * call_count), 0) / SUM(call_count)
+			ELSE 0 END
+	FROM usage_event_rollups` + where, args
 }
 
 func prepareSQLiteUsageEvent(ctx context.Context, event *store.UsageEvent) {
@@ -383,14 +457,17 @@ func buildSQLiteUsageEventWhere(ctx context.Context, q store.UsageEventQuery, ti
 	}
 	if !q.From.IsZero() {
 		conds = append(conds, timeColumn+" >= ?")
-		args = append(args, q.From.UTC())
+		args = append(args, sqliteCanonicalTime(q.From))
 	}
 	if !q.To.IsZero() {
 		conds = append(conds, timeColumn+" < ?")
-		args = append(args, q.To.UTC())
+		args = append(args, sqliteCanonicalTime(q.To))
 	}
 	if q.AgentID != nil {
 		add("agent_id", *q.AgentID)
+	}
+	if q.TeamID != nil {
+		add("team_id", *q.TeamID)
 	}
 	if q.Channel != "" {
 		add("channel", q.Channel)
@@ -434,6 +511,8 @@ func sqliteUsageEventGroupColumn(groupBy string) string {
 		return "status"
 	case "agent":
 		return "COALESCE(agent_id, '')"
+	case "team":
+		return "COALESCE(team_id, '')"
 	case "channel":
 		return "channel"
 	case "provider":

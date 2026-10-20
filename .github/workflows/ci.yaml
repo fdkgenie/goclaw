@@ -103,3 +103,46 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm build
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+  dashboard-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/dashboard/pnpm-lock.yaml
+      - name: Build the dashboard SPA
+        run: pnpm install --frozen-lockfile && pnpm build
+        working-directory: ui/dashboard
+      - name: Stage the SPA for embedding
+        run: |
+          mkdir -p internal/dashboard/webui/dist
+          cp -r ui/dashboard/dist/. internal/dashboard/webui/dist/
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go build -tags dashboardui ./cmd/dashboard
+      - run: go test -race ./internal/dashboard/...
