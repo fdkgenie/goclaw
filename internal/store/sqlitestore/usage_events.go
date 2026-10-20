@@ -85,9 +85,28 @@ func (s *SQLiteUsageEventStore) insertBatch(ctx context.Context, events []store.
 	return err
 }
 
+// sqliteNormalizedTimeExpr returns a UTC datetime() expression that accepts all
+// time formats written by this store: Go driver space form with zone suffix
+// ("2026-06-12 11:00:00 +0000 UTC"), RFC3339 ("2026-06-12T11:00:00Z"), RFC3339
+// with offset, and plain "YYYY-MM-DD HH:MM:SS". SQLite datetime() rejects the
+// driver's trailing zone name, so convert the numeric offset to +HH:MM first.
+func sqliteNormalizedTimeExpr(column string) string {
+	offsetPos := `20 + CASE WHEN instr(substr(` + column + `, 20), ' +') > 0 THEN instr(substr(` + column + `, 20), ' +') ELSE instr(substr(` + column + `, 20), ' -') END`
+	return `datetime(CASE
+		WHEN substr(` + column + `, 11, 1) = 'T' THEN replace(` + column + `, 'T', ' ')
+		WHEN instr(substr(` + column + `, 20), ' +') > 0 OR instr(substr(` + column + `, 20), ' -') > 0 THEN
+			substr(` + column + `, 1, 19) ||
+			substr(` + column + `, ` + offsetPos + `, 3) || ':' ||
+			substr(` + column + `, ` + offsetPos + ` + 3, 2)
+		ELSE ` + column + `
+	END)`
+}
+
 func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, bucketHour time.Time) error {
 	start := bucketHour.UTC().Truncate(time.Hour)
 	end := start.Add(time.Hour)
+	eventTime := sqliteNormalizedTimeExpr("event_time")
+	bucketTimeExpr := sqliteNormalizedTimeExpr("bucket_hour")
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -97,7 +116,7 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 
 	rows, err := tx.QueryContext(ctx, `SELECT
 		tenant_id,
-		bucket_hour,
+		`+bucketTimeExpr+` AS bucket_hour,
 		event_type,
 		resource_type,
 		resource_name,
@@ -121,9 +140,9 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		COALESCE(SUM(call_count), 0),
 		COALESCE(SUM(error_count), 0)
 	FROM usage_events
-	WHERE event_time >= ? AND event_time < ?
-	GROUP BY tenant_id, bucket_hour, event_type, resource_type, resource_name, source, agent_id, team_id, channel, provider, model, status`,
-		start, end)
+	WHERE `+eventTime+` >= ? AND `+eventTime+` < ?
+	GROUP BY tenant_id, `+bucketTimeExpr+`, event_type, resource_type, resource_name, source, agent_id, team_id, channel, provider, model, status`,
+		start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05"))
 	if err != nil {
 		return fmt.Errorf("aggregate usage event rollup: %w", err)
 	}
@@ -155,11 +174,11 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 		return err
 	}
 
-	// Normalized DELETE: match both driver t.String() and RFC3339 format
-	bucketPrefix := start.Format("2006-01-02 15:04:05")
+	// Whole-bucket replacement. Normalize both legacy driver/RFC3339 formats
+	// and convert offsets to UTC before comparing to the requested UTC hour.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM usage_event_rollups WHERE substr(replace(bucket_hour, 'T', ' '), 1, 19) = ?`,
-		bucketPrefix,
+		`DELETE FROM usage_event_rollups WHERE `+bucketTimeExpr+` = ?`,
+		start.Format("2006-01-02 15:04:05"),
 	); err != nil {
 		return fmt.Errorf("delete old bucket rollups: %w", err)
 	}
@@ -175,7 +194,7 @@ func (s *SQLiteUsageEventStore) RefreshEventRollupHour(ctx context.Context, buck
 
 func (s *SQLiteUsageEventStore) GetLatestEventRollupBucket(ctx context.Context) (*time.Time, error) {
 	var nt nullSqliteTime
-	err := s.db.QueryRowContext(ctx, `SELECT MAX(bucket_hour) FROM usage_event_rollups`).Scan(&nt)
+	err := s.db.QueryRowContext(ctx, `SELECT MAX(`+sqliteNormalizedTimeExpr("bucket_hour")+`) FROM usage_event_rollups`).Scan(&nt)
 	if err != nil {
 		return nil, fmt.Errorf("get latest event rollup bucket: %w", err)
 	}
@@ -240,9 +259,9 @@ func (s *SQLiteUsageEventStore) upsertEventRollups(ctx context.Context, q contex
 }
 
 func (s *SQLiteUsageEventStore) GetEventTimeSeries(ctx context.Context, q store.UsageEventQuery) ([]store.UsageEventTimeSeries, error) {
-	bucketExpr := "bucket_hour"
+	bucketExpr := sqliteNormalizedTimeExpr("bucket_hour")
 	if q.GroupBy == "day" {
-		bucketExpr = "strftime('%Y-%m-%d 00:00:00', bucket_hour)"
+		bucketExpr = "strftime('%Y-%m-%d 00:00:00', " + bucketExpr + ")"
 	}
 	where, args := buildSQLiteUsageEventWhere(ctx, q, "bucket_hour")
 	query := fmt.Sprintf(`SELECT
@@ -414,13 +433,14 @@ func buildSQLiteUsageEventWhere(ctx context.Context, q store.UsageEventQuery, ti
 		conds = append(conds, col+" = ?")
 		args = append(args, value)
 	}
+	timeExpr := sqliteNormalizedTimeExpr(timeColumn)
 	if !q.From.IsZero() {
-		conds = append(conds, timeColumn+" >= ?")
-		args = append(args, q.From.UTC())
+		conds = append(conds, timeExpr+" >= ?")
+		args = append(args, q.From.UTC().Format("2006-01-02 15:04:05"))
 	}
 	if !q.To.IsZero() {
-		conds = append(conds, timeColumn+" < ?")
-		args = append(args, q.To.UTC())
+		conds = append(conds, timeExpr+" < ?")
+		args = append(args, q.To.UTC().Format("2006-01-02 15:04:05"))
 	}
 	if q.AgentID != nil {
 		add("agent_id", *q.AgentID)
