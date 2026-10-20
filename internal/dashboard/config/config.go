@@ -23,6 +23,15 @@ type Config struct {
 	DashboardPassword string
 	TenantID          uuid.UUID
 	WebDir            string // optional --web-dir flag
+
+	// TrustedProxy marks the dashboard as running behind a reverse proxy
+	// that terminates TLS. The proxy protocol header is then trusted to
+	// decide whether a request arrived over HTTPS.
+	TrustedProxy bool
+
+	// Production enables the production hardening: the dashboard only
+	// accepts a login over HTTPS and the session cookie is always Secure.
+	Production bool
 }
 
 // Load parses env vars and validates required fields.
@@ -34,6 +43,8 @@ func Load() (*Config, error) {
 		DashboardAddr:     envOr("DASHBOARD_ADDR", defaultDashboardAddr),
 		DashboardPassword: os.Getenv("DASHBOARD_PASSWORD"),
 		WebDir:            os.Getenv("DASHBOARD_WEB_DIR"),
+		TrustedProxy:      envBool("DASHBOARD_TRUSTED_PROXY"),
+		Production:        envBool("DASHBOARD_PRODUCTION"),
 	}
 
 	if cfg.GoClawAPIKey == "" {
@@ -74,6 +85,17 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envBool parses a boolean environment variable. An unset or empty value is
+// false; "1", "true", "yes" and "on" (any case) are true.
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // deriveWSURL converts http(s)://host[:port]/path to ws(s)://host[:port]/ws.

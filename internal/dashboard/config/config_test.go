@@ -137,3 +137,58 @@ func TestTLSDerivesWSS(t *testing.T) {
 		t.Errorf("WSURL = %q, want %q", cfg.GoClawWSURL, "wss://gateway.example.com/ws")
 	}
 }
+
+// TestTrustedProxyAndProductionFlags pins the two security switches of the
+// dashboard. Both are explicit: the dashboard never guesses whether it runs
+// behind a TLS-terminating proxy.
+func TestTrustedProxyAndProductionFlags(t *testing.T) {
+	base := map[string]string{
+		"GOCLAW_API_URL":     "http://localhost:18790",
+		"GOCLAW_API_KEY":     "ak",
+		"DASHBOARD_PASSWORD": "pw",
+		"GOCLAW_TENANT_ID":   "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+	}
+	with := func(extra map[string]string) map[string]string {
+		out := map[string]string{}
+		for k, v := range base {
+			out[k] = v
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+
+	tests := []struct {
+		name           string
+		env            map[string]string
+		wantTrusted    bool
+		wantProduction bool
+	}{
+		{name: "unset", env: with(nil)},
+		{name: "empty", env: with(map[string]string{"DASHBOARD_TRUSTED_PROXY": "", "DASHBOARD_PRODUCTION": ""})},
+		{name: "true", env: with(map[string]string{"DASHBOARD_TRUSTED_PROXY": "true", "DASHBOARD_PRODUCTION": "1"}), wantTrusted: true, wantProduction: true},
+		{name: "mixed case", env: with(map[string]string{"DASHBOARD_TRUSTED_PROXY": "YES", "DASHBOARD_PRODUCTION": "On"}), wantTrusted: true, wantProduction: true},
+		{name: "false", env: with(map[string]string{"DASHBOARD_TRUSTED_PROXY": "false", "DASHBOARD_PRODUCTION": "no"})},
+		{name: "garbage", env: with(map[string]string{"DASHBOARD_TRUSTED_PROXY": "maybe", "DASHBOARD_PRODUCTION": "2"})},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			setenv(t, tc.env)
+			unset(t, "DASHBOARD_TRUSTED_PROXY", "DASHBOARD_PRODUCTION")
+			setenv(t, tc.env)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.TrustedProxy != tc.wantTrusted {
+				t.Errorf("TrustedProxy = %v, want %v", cfg.TrustedProxy, tc.wantTrusted)
+			}
+			if cfg.Production != tc.wantProduction {
+				t.Errorf("Production = %v, want %v", cfg.Production, tc.wantProduction)
+			}
+		})
+	}
+}

@@ -121,8 +121,15 @@ func (r *Router) loginHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Production mode requires HTTPS: the session cookie would otherwise
+	// travel in clear text.
+	if r.cfg.Production && !r.secureRequest(req) {
+		http.Error(w, "https required", http.StatusBadRequest)
+		return
+	}
+
 	token := r.sm.Create()
-	setSessionCookie(w, token, isSecure(req))
+	setSessionCookie(w, token, r.secureRequest(req))
 	r.writeJSON(w, map[string]bool{"authenticated": true})
 }
 
@@ -131,7 +138,7 @@ func (r *Router) logoutHandler(w http.ResponseWriter, req *http.Request) {
 	if cookie != nil {
 		r.sm.Delete(cookie.Value)
 	}
-	clearSessionCookie(w)
+	clearSessionCookie(w, r.secureRequest(req))
 	r.writeJSON(w, map[string]bool{"authenticated": false})
 }
 
@@ -229,4 +236,24 @@ func clientIP(r *http.Request) string {
 
 func isSecure(req *http.Request) bool {
 	return req.TLS != nil
+}
+
+// secureRequest reports whether the request reached the dashboard over TLS.
+//
+// A reverse proxy that terminates TLS leaves the dashboard on plain HTTP, so
+// the protocol header of the proxy is only honoured when the operator
+// declares the proxy trusted (DASHBOARD_TRUSTED_PROXY). Without that
+// declaration the header is ignored: an attacker could otherwise forge it
+// and get a Secure cookie issued for a plain HTTP request.
+//
+// In production mode a login over plain HTTP is refused: the session cookie
+// would travel unencrypted.
+func (r *Router) secureRequest(req *http.Request) bool {
+	if isSecure(req) {
+		return true
+	}
+	if !r.cfg.TrustedProxy {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")), "https")
 }

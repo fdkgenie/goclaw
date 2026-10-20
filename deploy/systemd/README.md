@@ -27,6 +27,8 @@ Provided via `/etc/goclaw/dashboard.env` (referenced by the systemd unit's
 | `DASHBOARD_ADDR` | No | HTTP listen address, default `127.0.0.1:18795` |
 | `GOCLAW_TENANT_ID` | Yes | Tenant UUID the dashboard is pinned to (fail-closed) |
 | `DASHBOARD_WEB_DIR` | No | Optional directory to serve the frontend UI from |
+| `DASHBOARD_TRUSTED_PROXY` | No | `true` when a reverse proxy terminates TLS in front of the dashboard. The `X-Forwarded-Proto` header is then trusted to decide whether a request arrived over HTTPS. Default `false` (the header is ignored) |
+| `DASHBOARD_PRODUCTION` | No | `true` enables the production hardening: a login over plain HTTP is refused and the session cookie is always `Secure`. Default `false` |
 
 ## 3. Tenant-Bound API Key Provisioning (Critical)
 
@@ -126,6 +128,7 @@ server {
         proxy_pass http://127.0.0.1:18795;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;   # required for the Secure cookie flag
         proxy_set_header Origin $scheme://$host;  # required for CSRF check
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -136,6 +139,24 @@ server {
 
 The dashboard's CSRF middleware verifies the `Origin` header matches the
 request host, so the reverse proxy must forward the client's `Origin`.
+
+### 4.1 Session cookie and TLS termination
+
+The session cookie carries the `Secure` flag when the request arrived over
+HTTPS. With a TLS-terminating proxy the dashboard sees a plain HTTP request,
+so it needs two things to issue a `Secure` cookie:
+
+1. the proxy forwards `X-Forwarded-Proto: $scheme`, and
+2. `DASHBOARD_TRUSTED_PROXY=true` in `/etc/goclaw/dashboard.env`.
+
+Without `DASHBOARD_TRUSTED_PROXY` the header is ignored on purpose: an
+attacker could otherwise forge it and obtain a `Secure` cookie for a request
+that never crossed TLS.
+
+Set `DASHBOARD_PRODUCTION=true` for a hardened deployment: the dashboard then
+refuses a login that did not arrive over HTTPS (plain `400 https required`)
+and always issues the cookie with the `Secure` flag. The proxy must
+therefore terminate TLS, and the dashboard must be reachable only through it.
 
 ## 5. Logs
 
@@ -183,6 +204,7 @@ valid session and is gated by the same fail-closed breaker as the data API.
 | `exit status 1`, `missing capability` | Gateway missing B1/B2 capabilities | Upgrade gateway to a build with B1+B2 merged |
 | `401` on all API calls | Missing/invalid session cookie | Log in via `/api/login` with `DASHBOARD_PASSWORD` |
 | `403` on POST from reverse proxy | Missing/mismatched `Origin` header | Configure proxy to forward `Origin` |
+| `400 https required` on login | `DASHBOARD_PRODUCTION=true` and the request did not arrive over HTTPS | Terminate TLS at the proxy, forward `X-Forwarded-Proto` and set `DASHBOARD_TRUSTED_PROXY=true` |
 | `503` on data API and `/api/stream` | Gateway disconnected; tenant not re-verified yet | Check the gateway and the `security.dashboard.tenant_mismatch` log |
 | `404` on `/` with "dashboard UI not built" | Binary built without the `dashboardui` tag | Rebuild with `make dashboard-build`, or set `DASHBOARD_WEB_DIR` |
 | Service won't start, sandbox denied | `ProtectSystem=strict` blocking a path | Add path to `ReadWritePaths` |

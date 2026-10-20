@@ -101,8 +101,10 @@ func degradedMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// clearSessionCookie clears the session cookie on the client.
-func clearSessionCookie(w http.ResponseWriter) {
+// clearSessionCookie clears the session cookie on the client. The Secure flag
+// must match the flag of the cookie that is being cleared, otherwise the
+// browser keeps the original cookie.
+func clearSessionCookie(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
@@ -110,7 +112,7 @@ func clearSessionCookie(w http.ResponseWriter) {
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   true,
+		Secure:   secure,
 	})
 }
 
