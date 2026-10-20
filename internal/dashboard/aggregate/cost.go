@@ -46,7 +46,12 @@ func Cost(ctx context.Context, client *goclaw.HTTPClient, resolve TeamResolver) 
 	var rowSum float64
 	for _, r := range breakdown.Rows {
 		label := r.Key
-		if resolved, ok := resolve(r.Key); ok {
+		var resolved string
+		var ok bool
+		if resolve != nil {
+			resolved, ok = resolve(r.Key)
+		}
+		if ok {
 			label = resolved
 		} else if r.Key == "" {
 			label = "Personal / Direct"
