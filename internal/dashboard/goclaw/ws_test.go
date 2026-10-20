@@ -23,13 +23,13 @@ func mustUUID(t *testing.T, s string) uuid.UUID {
 func connectClient(t *testing.T, f *testutil.FakeGoClaw, tenantID uuid.UUID) *Client {
 	t.Helper()
 	c := NewClient(Config{
-		WSURL:         f.WSURL(),
-		APIToken:      "ak",
-		TenantID:      tenantID,
-		UserID:        "user-1",
-		ReconnectMin:  50 * time.Millisecond,
-		ReconnectMax:  2 * time.Second,
-		OnDisconnect:  func(err error) {},
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     tenantID,
+		UserID:       "user-1",
+		ReconnectMin: 50 * time.Millisecond,
+		ReconnectMax: 2 * time.Second,
+		OnDisconnect: func(err error) {},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := c.Connect(ctx); err != nil {
@@ -43,9 +43,9 @@ func connectClient(t *testing.T, f *testutil.FakeGoClaw, tenantID uuid.UUID) *Cl
 func TestWSConnectSuccess(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 	})
 	c := connectClient(t, f, tenantID)
@@ -64,18 +64,18 @@ func TestWSConnectSuccess(t *testing.T) {
 func TestWSConnectMissingCapability(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: []string{protocol.CapEventsCronHeartbeatTenantScoped}, // missing B2 caps
 	})
 	c := NewClient(Config{
-		WSURL:         f.WSURL(),
-		APIToken:      "ak",
-		TenantID:      tenantID,
-		ReconnectMin:  50 * time.Millisecond,
-		ReconnectMax:  2 * time.Second,
-		OnDisconnect:  func(err error) {},
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     tenantID,
+		ReconnectMin: 50 * time.Millisecond,
+		ReconnectMax: 2 * time.Second,
+		OnDisconnect: func(err error) {},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -92,18 +92,18 @@ func TestWSConnectMissingCapability(t *testing.T) {
 func TestWSConnectWrongRole(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "operator",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "operator",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 	})
 	c := NewClient(Config{
-		WSURL:         f.WSURL(),
-		APIToken:      "ak",
-		TenantID:      tenantID,
-		ReconnectMin:  50 * time.Millisecond,
-		ReconnectMax:  2 * time.Second,
-		OnDisconnect:  func(err error) {},
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     tenantID,
+		ReconnectMin: 50 * time.Millisecond,
+		ReconnectMax: 2 * time.Second,
+		OnDisconnect: func(err error) {},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -117,18 +117,18 @@ func TestWSConnectWrongRole(t *testing.T) {
 func TestWSConnectIsOwner(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    true,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      true,
 		Capabilities: RequiredCapabilities,
 	})
 	c := NewClient(Config{
-		WSURL:         f.WSURL(),
-		APIToken:      "ak",
-		TenantID:      tenantID,
-		ReconnectMin:  50 * time.Millisecond,
-		ReconnectMax:  2 * time.Second,
-		OnDisconnect:  func(err error) {},
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     tenantID,
+		ReconnectMin: 50 * time.Millisecond,
+		ReconnectMax: 2 * time.Second,
+		OnDisconnect: func(err error) {},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -143,18 +143,18 @@ func TestWSConnectTenantMismatch(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	other := mustUUID(t, "6ba7b811-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 	})
 	c := NewClient(Config{
-		WSURL:         f.WSURL(),
-		APIToken:      "ak",
-		TenantID:      other,
-		ReconnectMin:  50 * time.Millisecond,
-		ReconnectMax:  2 * time.Second,
-		OnDisconnect:  func(err error) {},
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     other,
+		ReconnectMin: 50 * time.Millisecond,
+		ReconnectMax: 2 * time.Second,
+		OnDisconnect: func(err error) {},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -168,9 +168,9 @@ func TestWSConnectTenantMismatch(t *testing.T) {
 func TestWSCall(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 		Agents: []testutil.AgentData{
 			{ID: "a1", Name: "Agent 1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
@@ -195,9 +195,9 @@ func TestWSCall(t *testing.T) {
 func TestWSEventSubscription(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 	})
 	c := connectClient(t, f, tenantID)
@@ -228,9 +228,9 @@ func TestWSEventSubscription(t *testing.T) {
 func TestWSOutstandingCallsFailOnDisconnect(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 	})
 	c := connectClient(t, f, tenantID)
@@ -258,9 +258,9 @@ func TestWSOutstandingCallsFailOnDisconnect(t *testing.T) {
 func TestWSReconnectReverifiesCapabilities(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{
-		Role:       "admin",
-		TenantID:   tenantID,
-		IsOwner:    false,
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
 		Capabilities: RequiredCapabilities,
 	})
 	c := connectClient(t, f, tenantID)
@@ -290,4 +290,3 @@ func TestWSReconnectReverifiesCapabilities(t *testing.T) {
 		t.Errorf("reconnect tenant = %q", resp.TenantID)
 	}
 }
-

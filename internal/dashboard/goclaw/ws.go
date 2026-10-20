@@ -26,18 +26,18 @@ const (
 // requests and event subscriptions over a single connection, and reconnects
 // with exponential backoff on disconnect.
 type Client struct {
-	cfg Config
+	cfg    Config
 	dialer *websocket.Dialer
 
-	connMu   sync.Mutex // guards conn
-	conn     *websocket.Conn
+	connMu    sync.Mutex // guards conn
+	conn      *websocket.Conn
 	connected bool
 
 	pendingMu sync.Mutex
 	pending   map[string]chan *ResponseFrame
 
-	subsMu  sync.Mutex
-	subs    map[string][]chan *EventFrame
+	subsMu sync.Mutex
+	subs   map[string][]chan *EventFrame
 
 	connectMu   sync.RWMutex
 	connectResp *ConnectResponse
@@ -56,13 +56,13 @@ type Client struct {
 
 // Config configures the WS client.
 type Config struct {
-	WSURL         string
-	APIToken      string
-	TenantID      uuid.UUID
-	UserID        string
-	ReconnectMin  time.Duration
-	ReconnectMax  time.Duration
-	OnDisconnect  func(error)
+	WSURL        string
+	APIToken     string
+	TenantID     uuid.UUID
+	UserID       string
+	ReconnectMin time.Duration
+	ReconnectMax time.Duration
+	OnDisconnect func(error)
 }
 
 // ResponseFrame is a protocol response received from the gateway.

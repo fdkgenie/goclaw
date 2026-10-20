@@ -24,22 +24,22 @@ import (
 // compiles against the pre-B2 base and feature-gates/detects them at runtime.
 var RequiredCapabilities = []string{
 	protocol.CapEventsCronHeartbeatTenantScoped, // "events.cron_heartbeat_tenant_scoped" (B1)
-	"events.team_link_tenant_tagged",              // B2
-	"usage.events.team",                           // B2
-	"teams.tasks.list.has_more",                   // B2
+	"events.team_link_tenant_tagged",            // B2
+	"usage.events.team",                         // B2
+	"teams.tasks.list.has_more",                 // B2
 }
 
 // ConnectResponse is the dashboard-owned DTO for the WS connect response.
 type ConnectResponse struct {
-	Protocol    int                    `json:"protocol"`
-	Role        string                 `json:"role"`
-	UserID      string                 `json:"user_id"`
-	TenantID    string                 `json:"tenant_id"`
-	IsOwner     bool                   `json:"is_owner"`
-	Edition     string                 `json:"edition"`
-	ServerInfo  ServerInfo             `json:"server"`
-	TenantName  string                 `json:"tenant_name,omitempty"`
-	TenantSlug  string                 `json:"tenant_slug,omitempty"`
+	Protocol   int        `json:"protocol"`
+	Role       string     `json:"role"`
+	UserID     string     `json:"user_id"`
+	TenantID   string     `json:"tenant_id"`
+	IsOwner    bool       `json:"is_owner"`
+	Edition    string     `json:"edition"`
+	ServerInfo ServerInfo `json:"server"`
+	TenantName string     `json:"tenant_name,omitempty"`
+	TenantSlug string     `json:"tenant_slug,omitempty"`
 }
 
 // ServerInfo describes the gateway as advertised in connect response.
@@ -51,21 +51,21 @@ type ServerInfo struct {
 
 // AgentEventPayload is an agent lifecycle event pushed via WS.
 type AgentEventPayload struct {
-	RunID    string    `json:"run_id"`
-	TraceID  string    `json:"trace_id,omitempty"`
-	AgentID  string    `json:"agent_id,omitempty"`
-	TeamID   string    `json:"team_id,omitempty"`
-	Event    string    `json:"event"`
-	Tool     string    `json:"tool,omitempty"`
+	RunID     string    `json:"run_id"`
+	TraceID   string    `json:"trace_id,omitempty"`
+	AgentID   string    `json:"agent_id,omitempty"`
+	TeamID    string    `json:"team_id,omitempty"`
+	Event     string    `json:"event"`
+	Tool      string    `json:"tool,omitempty"`
 	Timestamp time.Time `json:"timestamp,omitempty"`
 }
 
 // TraceStatusPayload is a trace status event pushed via WS.
 type TraceStatusPayload struct {
-	TraceID string    `json:"trace_id"`
-	RunID   string    `json:"run_id,omitempty"`
-	Status  string    `json:"status"`
-	TenantID string   `json:"tenant_id,omitempty"`
+	TraceID   string    `json:"trace_id"`
+	RunID     string    `json:"run_id,omitempty"`
+	Status    string    `json:"status"`
+	TenantID  string    `json:"tenant_id,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
@@ -95,9 +95,10 @@ func ValidateConnect(resp ConnectResponse, expectedTenant uuid.UUID) error {
 		if !HasCapability(resp.ServerInfo.Capabilities, want) {
 			return &ConnectError{Code: "missing_capability", Message: "missing capability " + want}
 		}
-	}   // close for loop
+	} // close for loop
 	return nil
 }
+
 // ConnectError is a connect-handshake failure.
 type ConnectError struct {
 	Code    string
