@@ -132,8 +132,8 @@ func TestSQLiteMigration60CutoffSkipsOpenHour(t *testing.T) {
 		if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(cost_usd), 0)
 			FROM usage_event_rollups
 			WHERE tenant_id = ?
-			  AND substr(replace(bucket_hour, 'T', ' '), 1, 19) = ?`,
-			tenantID.String(), bucket.Format("2006-01-02 15:04:05")).Scan(&rows, &cost); err != nil {
+			  AND bucket_hour = ?`,
+			tenantID.String(), sqliteCanonicalTime(bucket)).Scan(&rows, &cost); err != nil {
 			t.Fatalf("count rollups: %v", err)
 		}
 		return rows, cost

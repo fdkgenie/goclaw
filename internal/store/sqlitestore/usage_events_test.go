@@ -5,6 +5,7 @@ package sqlitestore
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,12 +187,12 @@ func TestSQLiteUsageEventStore_CostByTeamAndReplacement(t *testing.T) {
 
 func sqliteRollupSnapshot(t *testing.T, db *sql.DB, tenantID uuid.UUID, bucket time.Time) (rows int, cost float64, id string) {
 	t.Helper()
-	prefix := bucket.UTC().Format("2006-01-02 15:04:05")
+	prefix := sqliteCanonicalTime(bucket)
 	if err := db.QueryRow(`
 		SELECT COUNT(*), COALESCE(SUM(cost_usd), 0), COALESCE(MIN(id), '')
 		FROM usage_event_rollups
 		WHERE tenant_id = ?
-		  AND substr(replace(bucket_hour, 'T', ' '), 1, 19) = ?`,
+		  AND bucket_hour = ?`,
 		tenantID.String(), prefix).Scan(&rows, &cost, &id); err != nil {
 		t.Fatalf("rollup snapshot: %v", err)
 	}
@@ -338,7 +339,9 @@ func TestSQLiteUsageEventStore_RefreshRollbackKeepsPriorRollups(t *testing.T) {
 	}
 }
 
-func TestSQLiteUsageEventStore_RefreshDeletesLegacyBucketFormats(t *testing.T) {
+// Stored bucket_hour is canonical UTC text, so a same-bucket refresh replaces
+// the whole bucket with a plain index-usable equality delete.
+func TestSQLiteUsageEventStore_RefreshReplacesExistingBucketRollup(t *testing.T) {
 	db := openTestDB(t)
 	if err := EnsureSchema(db); err != nil {
 		t.Fatalf("EnsureSchema: %v", err)
@@ -354,23 +357,20 @@ func TestSQLiteUsageEventStore_RefreshDeletesLegacyBucketFormats(t *testing.T) {
 		t.Fatalf("InsertEvent: %v", err)
 	}
 
-	seedLegacy := func(bucketHour string) {
-		t.Helper()
-		if _, err := db.Exec(`INSERT INTO usage_event_rollups
-			(id, tenant_id, bucket_hour, event_type, resource_type, resource_name, source, channel, provider, model, status, cost_usd, call_count)
-			VALUES (?, ?, ?, 'tool_call', 'tool', 'bash', '', '', '', '', 'completed', 99, 1)`,
-			uuid.NewString(), store.MasterTenantID.String(), bucketHour); err != nil {
-			t.Fatalf("seed legacy rollup %q: %v", bucketHour, err)
-		}
+	// Stale row for the same canonical bucket but a group key not present in
+	// the current events; refresh must delete it via plain bucket_hour equality.
+	if _, err := db.Exec(`INSERT INTO usage_event_rollups
+		(id, tenant_id, bucket_hour, event_type, resource_type, resource_name, source, channel, provider, model, status, cost_usd, call_count)
+		VALUES (?, ?, ?, 'tool_call', 'tool', 'stale', '', '', '', '', 'completed', 99, 1)`,
+		uuid.NewString(), store.MasterTenantID.String(), sqliteCanonicalTime(bucket)); err != nil {
+		t.Fatalf("seed stale rollup: %v", err)
 	}
-	seedLegacy("2026-06-12T11:00:00Z")
-	seedLegacy("2026-06-12T18:00:00+07:00") // same instant as 11:00Z
 
 	if err := eventStore.RefreshEventRollupHour(ctx, bucket); err != nil {
 		t.Fatalf("RefreshEventRollupHour: %v", err)
 	}
 	if rows, cost, _ := sqliteRollupSnapshot(t, db, store.MasterTenantID, bucket); rows != 1 || cost != 2 {
-		t.Fatalf("legacy formats survived refresh: rows=%d cost=%v, want rows=1 cost=2", rows, cost)
+		t.Fatalf("stale bucket row survived refresh: rows=%d cost=%v, want rows=1 cost=2", rows, cost)
 	}
 }
 
@@ -435,11 +435,77 @@ func TestSQLiteUsageEventStore_RefreshNormalizesRFC3339Offset(t *testing.T) {
 	if rows, cost, _ := sqliteRollupSnapshot(t, db, store.MasterTenantID, bucket); rows != 1 || cost != 6 {
 		t.Fatalf("offset event rollups = rows=%d cost=%v, want rows=1 cost=6", rows, cost)
 	}
-	var storedBucket sqliteTime
+	var storedBucket string
 	if err := db.QueryRow(`SELECT bucket_hour FROM usage_event_rollups WHERE tenant_id = ?`, store.MasterTenantID.String()).Scan(&storedBucket); err != nil {
 		t.Fatalf("query rollup bucket_hour: %v", err)
 	}
-	if !storedBucket.Time.Equal(bucket) {
-		t.Fatalf("rollup bucket_hour = %s, want UTC-normalized %s", storedBucket.Time, bucket)
+	if want := sqliteCanonicalTime(bucket); storedBucket != want {
+		t.Fatalf("rollup bucket_hour = %q, want canonical %q", storedBucket, want)
+	}
+}
+
+// Rollup reads must keep bucket_hour unwrapped so SQLite can range-seek
+// idx_usage_event_rollups_tenant_hour instead of scanning every tenant rollup.
+func TestSQLiteUsageEventStore_RollupReadsUseTenantHourIndex(t *testing.T) {
+	db := openTestDB(t)
+	if err := EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	ctx := store.WithTenantID(context.Background(), store.MasterTenantID)
+	from := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name  string
+		build func() (string, []any)
+	}{
+		{"timeseries", func() (string, []any) {
+			return sqliteUsageEventTimeSeriesQuery(ctx, store.UsageEventQuery{From: from, To: to})
+		}},
+		{"timeseries-day", func() (string, []any) {
+			return sqliteUsageEventTimeSeriesQuery(ctx, store.UsageEventQuery{From: from, To: to, GroupBy: "day"})
+		}},
+		{"breakdown", func() (string, []any) {
+			return sqliteUsageEventBreakdownQuery(ctx, store.UsageEventQuery{From: from, To: to, GroupBy: "model"})
+		}},
+		{"breakdown-resource", func() (string, []any) {
+			return sqliteUsageEventBreakdownQuery(ctx, store.UsageEventQuery{From: from, To: to})
+		}},
+		{"summary", func() (string, []any) {
+			return sqliteUsageEventSummaryQuery(ctx, store.UsageEventQuery{From: from, To: to})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			query, args := tc.build()
+			rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+			if err != nil {
+				t.Fatalf("explain %s: %v", tc.name, err)
+			}
+			defer rows.Close()
+
+			var details []string
+			for rows.Next() {
+				var id, parent, notused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+					t.Fatalf("scan plan: %v", err)
+				}
+				details = append(details, detail)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatalf("plan rows: %v", err)
+			}
+
+			joined := strings.Join(details, "\n")
+			if !strings.Contains(joined, "USING INDEX idx_usage_event_rollups_tenant_hour") {
+				t.Fatalf("%s plan does not seek the tenant+hour index:\n%s", tc.name, joined)
+			}
+			for _, detail := range details {
+				if strings.HasPrefix(detail, "SCAN usage_event_rollups") {
+					t.Fatalf("%s plan full-scans rollups:\n%s", tc.name, joined)
+				}
+			}
+		})
 	}
 }
