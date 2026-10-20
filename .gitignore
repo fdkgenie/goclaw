@@ -9,6 +9,7 @@ backup/
 /openclaw-go
 /pkg-helper
 /goclaw.exe
+/goclaw-dashboard
 /goclaw-local.exe
 
 # Ad-hoc debug probes live here — never commit (they import internal/
