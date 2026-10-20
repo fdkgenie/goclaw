@@ -79,6 +79,9 @@ type Config struct {
 	ActivityLogs []map[string]any
 	// Version advertised in connect response.
 	Version string
+	// PingInterval makes the fake send WebSocket ping control frames at
+	// that interval, like the real gateway does. Zero disables the pings.
+	PingInterval time.Duration
 }
 
 // FakeGoClaw is an in-process fake gateway (HTTP + WS).
@@ -404,6 +407,12 @@ func (f *FakeGoClaw) handleWS(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
+	if f.cfg.PingInterval > 0 {
+		stop := make(chan struct{})
+		defer close(stop)
+		go f.pingLoop(conn, stop)
+	}
+
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -420,6 +429,27 @@ func (f *FakeGoClaw) handleWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			f.handleRPC(conn, &req)
+		}
+	}
+}
+
+// pingLoop sends ping control frames until the connection closes or stop is
+// closed. It mirrors the gateway writePump (internal/gateway/client.go), which
+// pings every 30s to keep idle connections alive.
+func (f *FakeGoClaw) pingLoop(conn *websocket.Conn, stop <-chan struct{}) {
+	ticker := time.NewTicker(f.cfg.PingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			f.writeMu.Lock()
+			err := conn.WriteMessage(websocket.PingMessage, nil)
+			f.writeMu.Unlock()
+			if err != nil {
+				return
+			}
 		}
 	}
 }

@@ -329,6 +329,59 @@ func TestWSOutstandingCallsFailOnDisconnect(t *testing.T) {
 	}
 }
 
+// TestWSIdleConnectionSurvivesGatewayPings covers the idle-connection
+// regression: the client used to drop a healthy but idle gateway connection
+// when its read deadline expired, because gorilla does not extend the
+// deadline on control frames. The dashboard then flapped into its degraded
+// (fail-closed, 503) state every minute.
+func TestWSIdleConnectionSurvivesGatewayPings(t *testing.T) {
+	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := testutil.NewFakeGoClaw(t, testutil.Config{
+		Role:         "admin",
+		TenantID:     tenantID,
+		IsOwner:      false,
+		Capabilities: RequiredCapabilities,
+		PingInterval: 50 * time.Millisecond,
+	})
+
+	disconnected := make(chan error, 1)
+	c := NewClient(Config{
+		WSURL:        f.WSURL(),
+		APIToken:     "ak",
+		TenantID:     tenantID,
+		UserID:       "user-1",
+		ReadDeadline: 200 * time.Millisecond,
+		ReconnectMin: 50 * time.Millisecond,
+		ReconnectMax: 2 * time.Second,
+		OnDisconnect: func(err error) {
+			select {
+			case disconnected <- err:
+			default:
+			}
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+
+	// Idle for several read deadlines: only the gateway pings keep the
+	// connection alive.
+	time.Sleep(1 * time.Second)
+
+	select {
+	case err := <-disconnected:
+		t.Fatalf("connection dropped while the gateway was pinging: %v", err)
+	default:
+	}
+	if !c.Connected() {
+		t.Fatal("expected the client to stay connected")
+	}
+}
+
 func TestWSReconnectReverifiesCapabilities(t *testing.T) {
 	tenantID := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	f := testutil.NewFakeGoClaw(t, testutil.Config{

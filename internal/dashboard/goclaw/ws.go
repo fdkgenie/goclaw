@@ -17,7 +17,7 @@ import (
 const (
 	defaultReconnectMin = 500 * time.Millisecond
 	defaultReconnectMax = 30 * time.Second
-	readDeadline        = 60 * time.Second
+	defaultReadDeadline = 60 * time.Second
 	writeDeadline       = 15 * time.Second
 	dialTimeout         = 10 * time.Second
 
@@ -35,6 +35,11 @@ const (
 type Client struct {
 	cfg    Config
 	dialer *websocket.Dialer
+
+	// readDeadline is the per-read deadline on the WebSocket connection. It
+	// is extended every time the gateway proves liveness with a ping or a
+	// pong, so an idle connection is kept while a dead one is dropped.
+	readDeadline time.Duration
 
 	connMu    sync.Mutex // guards conn
 	conn      *websocket.Conn
@@ -84,6 +89,10 @@ type Config struct {
 	// client backing off, so the service stays fail-closed until verification
 	// passes.
 	OnReconnect func() error
+	// ReadDeadline is the per-read deadline on the WebSocket connection.
+	// Zero means the default (60s). The deadline is extended whenever the
+	// gateway proves liveness with a ping or a pong.
+	ReadDeadline time.Duration
 }
 
 // ResponseFrame is a protocol response received from the gateway.
@@ -100,11 +109,15 @@ func NewClient(cfg Config) *Client {
 	if cfg.ReconnectMax == 0 {
 		cfg.ReconnectMax = defaultReconnectMax
 	}
+	if cfg.ReadDeadline == 0 {
+		cfg.ReadDeadline = defaultReadDeadline
+	}
 	return &Client{
-		cfg:     cfg,
-		dialer:  &websocket.Dialer{},
-		pending: make(map[string]chan *ResponseFrame),
-		subs:    make(map[string][]chan *EventFrame),
+		cfg:          cfg,
+		dialer:       &websocket.Dialer{},
+		readDeadline: cfg.ReadDeadline,
+		pending:      make(map[string]chan *ResponseFrame),
+		subs:         make(map[string][]chan *EventFrame),
 	}
 }
 
@@ -195,6 +208,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	}
 
 	c.setConn(conn)
+	c.installLivenessHandlers(conn)
 
 	reqID := uuid.NewString()
 	params := map[string]any{
@@ -219,7 +233,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 
 	// Read the connect response directly from the connection (readLoop is not
 	// running yet during the handshake).
-	conn.SetReadDeadline(time.Now().Add(readDeadline))
+	conn.SetReadDeadline(time.Now().Add(c.readDeadline))
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		c.closeConn()
@@ -291,7 +305,7 @@ func (c *Client) readLoop(ctx context.Context) {
 			return
 		}
 
-		conn.SetReadDeadline(time.Now().Add(readDeadline))
+		conn.SetReadDeadline(time.Now().Add(c.readDeadline))
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			readErr = err
@@ -450,6 +464,32 @@ func (c *Client) Close() error {
 }
 
 // ----- internal -----
+
+// installLivenessHandlers keeps the read deadline in sync with the gateway's
+// liveness signal.
+//
+// The gateway pings every 30s and extends its own read deadline when it
+// receives the pong (internal/gateway/client.go). Without a matching handler
+// here the dashboard's read deadline expires on an idle-but-healthy
+// connection: gorilla does not extend the deadline on control frames, so the
+// client drops the connection after readDeadline and the service flaps into
+// its degraded (fail-closed) state every minute.
+//
+// The ping handler answers the ping with a pong — the default handler is
+// replaced, so the reply has to be sent explicitly — and both handlers
+// extend the read deadline. A gateway that stops pinging still loses the
+// connection when the deadline expires.
+func (c *Client) installLivenessHandlers(conn *websocket.Conn) {
+	conn.SetPingHandler(func(appData string) error {
+		if err := conn.SetReadDeadline(time.Now().Add(c.readDeadline)); err != nil {
+			return err
+		}
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(writeDeadline))
+	})
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(c.readDeadline))
+	})
+}
 
 func (c *Client) setConn(conn *websocket.Conn) {
 	c.connMu.Lock()
