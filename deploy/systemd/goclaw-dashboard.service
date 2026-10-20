@@ -1,0 +1,38 @@
+[Unit]
+Description=GoClaw Standalone Dashboard Service
+Documentation=https://github.com/nextlevelbuilder/goclaw
+After=network.target goclaw.service
+Wants=goclaw.service
+Requires=goclaw.service
+
+[Service]
+Type=simple
+User=goclaw
+Group=goclaw
+EnvironmentFile=/etc/goclaw/dashboard.env
+ExecStart=/usr/local/bin/goclaw-dashboard --web-dir /var/lib/goclaw/dashboard-ui/dist
+WorkingDirectory=/var/lib/goclaw
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=10
+StartLimitIntervalSec=60
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# Security sandboxing
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/goclaw /var/log/goclaw
+ReadWriteDirectories=-/var/lib/goclaw -/var/log/goclaw
+
+# Capability bounding: drop everything not needed
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Network: allow outbound to gateway (localhost or remote), no inbound beyond service port
+# (systemd does not easily restrict outbound; rely on host firewall / network namespace if needed)
+
+[Install]
+WantedBy=multi-user.target
