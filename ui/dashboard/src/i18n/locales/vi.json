@@ -18,5 +18,22 @@
   "overview.cost": "Chi phí chạy (USD/giờ)",
   "quality.exact": "Chính xác",
   "quality.approx": "Kích xấp xỉ",
-  "overview.kpi.truncated_label": "≥{{value}}"
+  "overview.kpi.truncated_label": "≥{{value}}",
+  "orgchart.loading": "Đang tải sơ đồ tổ chức…",
+  "orgchart.title": "Sơ đồ tổ chức",
+  "orgchart.teams": "Nhóm:",
+  "orgchart.leads": "Trưởng nhóm:",
+  "orgchart.members": "Thành viên:",
+  "orgchart.links": "Liên kết:",
+  "orgchart.empty": "Không có nhóm nào.",
+  "cost.loading": "Đang tải dữ liệu chi phí…",
+  "cost.top_n": "Top N theo số lần gọi",
+  "cost.group": "Nhóm",
+  "cost.cost_usd": "Chi phí (USD)",
+  "cost.other": "Khác",
+  "activity.loading": "Đang tải hoạt động…",
+  "activity.title": "Hoạt động",
+  "activity.empty": "Chưa có hoạt động.",
+  "activity.gap": "Gián đoạn kết nối",
+  "activity.details": "Chi tiết"
 }

@@ -5,12 +5,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/time/rate"
 
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/activity"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/config"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/live"
@@ -29,7 +32,7 @@ func testRouterWithHub(t *testing.T) (*Router, *live.Hub, *SessionManager) {
 	rl := NewRateLimiter(rate.Every(time.Minute), 5)
 	state := live.NewState()
 	hub := live.NewHub(state)
-	return NewRouter(cfg, state, nil, nil, hub, sm, rl), hub, sm
+	return NewRouter(cfg, state, nil, nil, hub, sm, rl, activity.NewRingBuffer()), hub, sm
 }
 
 func streamStatus(t *testing.T, router *Router, cookie *http.Cookie) int {
@@ -41,6 +44,80 @@ func streamStatus(t *testing.T, router *Router, cookie *http.Cookie) int {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	return w.Code
+}
+
+func TestStaticServesSPAAndAssets(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>spa-shell</html>"), 0o600); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o700); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("console.log('spa')"), 0o600); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	cfg := &config.Config{DashboardPassword: "secret", WebDir: dir}
+	state := live.NewState()
+	router := NewRouter(cfg, state, nil, nil, live.NewHub(state), NewSessionManager(time.Hour), NewRateLimiter(rate.Every(time.Minute), 5), activity.NewRingBuffer())
+
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/", want: "spa-shell"},
+		{path: "/teams/alpha", want: "spa-shell"}, // SPA fallback
+		{path: "/assets/app.js", want: "console.log('spa')"},
+	}
+	for _, tc := range tests {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s status = %d, want 200", tc.path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("%s body = %q, want %q", tc.path, w.Body.String(), tc.want)
+		}
+	}
+
+	// Unknown API paths never fall through to the SPA.
+	sm := router.sm
+	tok := sm.Create()
+	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: tok})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown API status = %d, want 404", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "spa-shell") {
+		t.Fatal("unknown API path was served the SPA shell")
+	}
+}
+
+func TestActivityEndpointReturnsRingItems(t *testing.T) {
+	ring := activity.NewRingBuffer()
+	ring.Add(activity.ActivityItem{
+		ID:      "e1",
+		Type:    activity.TypeAgentEvent,
+		Summary: "run.started",
+	})
+	state := live.NewState()
+	sm := NewSessionManager(time.Hour)
+	router := NewRouter(&config.Config{DashboardPassword: "secret"}, state, nil, nil, live.NewHub(state), sm, NewRateLimiter(rate.Every(time.Minute), 5), ring)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/activity", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sm.Create()})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("activity status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "run.started") {
+		t.Fatalf("activity body = %q, want ring item", w.Body.String())
+	}
 }
 
 func TestStreamRequiresSession(t *testing.T) {
@@ -63,7 +140,7 @@ func TestStreamRequiresSession(t *testing.T) {
 		expired := NewSessionManager(-time.Second)
 		tok := expired.Create()
 		state := live.NewState()
-		router := NewRouter(&config.Config{DashboardPassword: "secret"}, state, nil, nil, live.NewHub(state), expired, NewRateLimiter(rate.Every(time.Minute), 5))
+		router := NewRouter(&config.Config{DashboardPassword: "secret"}, state, nil, nil, live.NewHub(state), expired, NewRateLimiter(rate.Every(time.Minute), 5), nil)
 		cookie := &http.Cookie{Name: sessionCookieName, Value: tok}
 		if got := streamStatus(t, router, cookie); got != http.StatusUnauthorized {
 			t.Fatalf("expired session status = %d, want 401", got)

@@ -18,5 +18,22 @@
   "overview.cost": "消耗率 (USD/小时)",
   "quality.exact": "精确",
   "quality.approx": "近似",
-  "overview.kpi.truncated_label": "≥{{value}}"
+  "overview.kpi.truncated_label": "≥{{value}}",
+  "orgchart.loading": "正在加载组织图…",
+  "orgchart.title": "组织图",
+  "orgchart.teams": "团队：",
+  "orgchart.leads": "负责人：",
+  "orgchart.members": "成员：",
+  "orgchart.links": "链接：",
+  "orgchart.empty": "未找到团队。",
+  "cost.loading": "正在加载成本数据…",
+  "cost.top_n": "按调用次数前 N 名",
+  "cost.group": "分组",
+  "cost.cost_usd": "成本 (USD)",
+  "cost.other": "其他",
+  "activity.loading": "正在加载活动…",
+  "activity.title": "活动",
+  "activity.empty": "暂无活动。",
+  "activity.gap": "连接中断",
+  "activity.details": "详情"
 }

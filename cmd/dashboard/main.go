@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/activity"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/config"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/live"
@@ -72,6 +73,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	slog.Info("tenant canary verified", "tenant", cfg.TenantID)
 
+	// Activity history (best-effort; live events are appended below).
+	ring := activity.NewRingBuffer()
+	if err := ring.Backfill(ctx, httpClient); err != nil {
+		slog.Warn("activity backfill failed", "err", err)
+	}
+
 	// Live state + reconciler + SSE hub.
 	state := live.NewState()
 	hub := live.NewHub(state)
@@ -90,6 +97,15 @@ func run(ctx context.Context, cfg *config.Config) error {
 				return
 			case frame := <-agentEvents:
 				if evt, ok := goclaw.AgentEventFromFrame(frame); ok {
+					ring.Add(activity.ActivityItem{
+						ID:        fmt.Sprintf("agent:%s:%s:%d", evt.RunID, evt.Event, evt.Timestamp.UnixNano()),
+						Type:      activity.TypeAgentEvent,
+						Timestamp: evt.Timestamp,
+						AgentID:   evt.AgentID,
+						TeamID:    evt.TeamID,
+						Summary:   evt.Event,
+						Details:   evt,
+					})
 					reconciler.HandleEvent(evt)
 				}
 			case frame := <-traceEvents:
@@ -106,7 +122,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	// HTTP server.
 	sm := server.NewSessionManager(sessionMaxAge)
 	rl := server.NewRateLimiter(rate.Every(time.Minute), 5)
-	router := server.NewRouter(cfg, state, wsClient, httpClient, hub, sm, rl)
+	router := server.NewRouter(cfg, state, wsClient, httpClient, hub, sm, rl, ring)
 
 	srv := &http.Server{
 		Addr:    cfg.DashboardAddr,

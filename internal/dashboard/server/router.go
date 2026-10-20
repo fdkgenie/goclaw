@@ -7,12 +7,15 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/activity"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/aggregate"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/config"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/live"
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/webui"
 )
 
 type Router struct {
@@ -24,10 +27,12 @@ type Router struct {
 	hub   *live.Hub
 	sm    *SessionManager
 	rl    *RateLimiter
+	ring  *activity.RingBuffer
+	web   http.Handler
 }
 
 // NewRouter builds the API router.
-func NewRouter(cfg *config.Config, state *live.State, ws *goclaw.Client, httpClient *goclaw.HTTPClient, hub *live.Hub, sm *SessionManager, rl *RateLimiter) *Router {
+func NewRouter(cfg *config.Config, state *live.State, ws *goclaw.Client, httpClient *goclaw.HTTPClient, hub *live.Hub, sm *SessionManager, rl *RateLimiter, ring *activity.RingBuffer) *Router {
 	r := &Router{
 		mux:   http.NewServeMux(),
 		cfg:   cfg,
@@ -37,6 +42,8 @@ func NewRouter(cfg *config.Config, state *live.State, ws *goclaw.Client, httpCli
 		hub:   hub,
 		sm:    sm,
 		rl:    rl,
+		ring:  ring,
+		web:   webui.Handler(cfg.WebDir),
 	}
 
 	// Public auth.
@@ -146,18 +153,27 @@ func (r *Router) handleCost(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) handleActivity(w http.ResponseWriter, req *http.Request) {
-	// Activity comes from the ring buffer; placeholder returns empty list.
-	r.writeJSON(w, map[string]any{"items": []any{}})
+	limit := 100
+	if raw := req.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	items := []activity.ActivityItem{}
+	if r.ring != nil {
+		items = r.ring.List(limit)
+	}
+	r.writeJSON(w, map[string]any{"items": items})
 }
 
-// staticHandler serves the embedded UI or a 404 hint.
+// staticHandler serves the embedded UI or a 404 hint. API paths never fall
+// through to the SPA.
 func (r *Router) staticHandler(w http.ResponseWriter, req *http.Request) {
-	if req.URL.Path != "/" {
+	if strings.HasPrefix(req.URL.Path, "/api/") {
 		http.NotFound(w, req)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte("GoClaw Dashboard API. Use /api/.* endpoints."))
+	r.web.ServeHTTP(w, req)
 }
 
 func clientIP(r *http.Request) string {

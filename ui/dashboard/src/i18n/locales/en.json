@@ -18,5 +18,22 @@
   "overview.cost": "Burn Rate (USD/h)",
   "quality.exact": "Exact",
   "quality.approx": "Approx",
-  "overview.kpi.truncated_label": "≥{{value}}"
+  "overview.kpi.truncated_label": "≥{{value}}",
+  "orgchart.loading": "Loading org chart…",
+  "orgchart.title": "Organization chart",
+  "orgchart.teams": "Teams:",
+  "orgchart.leads": "Leads:",
+  "orgchart.members": "Members:",
+  "orgchart.links": "Links:",
+  "orgchart.empty": "No teams found.",
+  "cost.loading": "Loading cost data…",
+  "cost.top_n": "Top N by calls",
+  "cost.group": "Group",
+  "cost.cost_usd": "Cost (USD)",
+  "cost.other": "Other",
+  "activity.loading": "Loading activity…",
+  "activity.title": "Activity",
+  "activity.empty": "No activity yet.",
+  "activity.gap": "Reconnection gap",
+  "activity.details": "Details"
 }

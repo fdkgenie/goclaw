@@ -3,6 +3,9 @@ import { apiGet, apiPost } from "./api/client";
 import { useSSE } from "./api/sse";
 import type { LiveKPI } from "./api/types";
 import { OverviewPage } from "./pages/OverviewPage";
+import { OrgChartPage } from "./pages/OrgChartPage";
+import { CostPage } from "./pages/CostPage";
+import { ActivityPage } from "./pages/ActivityPage";
 import { t } from "./i18n";
 
 type AuthState = "checking" | "authenticated" | "anonymous";
@@ -124,6 +127,12 @@ function AppShell({ onLogout }: { onLogout: () => void }) {
               {t("nav.cost")}
             </button>
             <button
+              className={`btn ${page === "activity" ? "btn-primary" : "btn-outline"}`}
+              onClick={() => setPage("activity")}
+            >
+              {t("nav.activity")}
+            </button>
+            <button
               className="btn-outline"
               onClick={logout}
             >
@@ -138,8 +147,9 @@ function AppShell({ onLogout }: { onLogout: () => void }) {
           Live version: {version ?? "—"}
         </div>
         {page === "overview" && <OverviewPage snapshot={snapshot} />}
-        {page === "orgchart" && <div className="card">Org Chart (placeholder)</div>}
-        {page === "cost" && <div className="card">Cost (placeholder)</div>}
+        {page === "orgchart" && <OrgChartPage />}
+        {page === "cost" && <CostPage />}
+        {page === "activity" && <ActivityPage />}
       </div>
     </div>
   );
