@@ -36,7 +36,7 @@ type Snapshot struct {
 type Hub struct {
 	mu          sync.Mutex
 	version     uint64
-	subscribers map[chan Delta]struct{}
+	subscribers map[*subscriber]struct{}
 	state       *State
 
 	// down is set when the gateway connection dropped (the terminal "down"
@@ -45,10 +45,28 @@ type Hub struct {
 	down bool
 }
 
+// subscriber owns one SSE subscriber channel. The hub is the single owner of
+// the channel: it is closed at most once, no matter whether the subscriber
+// unsubscribes or the hub drops it as a slow consumer.
+type subscriber struct {
+	ch     chan Delta
+	closed bool
+}
+
+// close closes the subscriber channel. It is idempotent: only the first call
+// closes the channel, later calls are no-ops.
+func (s *subscriber) close() {
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.ch)
+}
+
 // NewHub creates a Hub over the given State.
 func NewHub(state *State) *Hub {
 	return &Hub{
-		subscribers: make(map[chan Delta]struct{}),
+		subscribers: make(map[*subscriber]struct{}),
 		state:       state,
 	}
 }
@@ -56,6 +74,9 @@ func NewHub(state *State) *Hub {
 // Subscribe returns the current snapshot, a channel of deltas, and an
 // unsubscribe function. Snapshot + channel registration are atomic under one
 // lock.
+//
+// The unsubscribe function is safe to call after the hub already dropped the
+// subscriber as a slow consumer: the channel is closed exactly once.
 func (h *Hub) Subscribe() (Snapshot, chan Delta, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -66,13 +87,13 @@ func (h *Hub) Subscribe() (Snapshot, chan Delta, func()) {
 		Entries: h.state.Snapshot(),
 		KPI:     h.state.ComputeKPI(),
 	}
-	ch := make(chan Delta, subscriberChannelCap)
-	h.subscribers[ch] = struct{}{}
+	sub := &subscriber{ch: make(chan Delta, subscriberChannelCap)}
+	h.subscribers[sub] = struct{}{}
 
-	return snap, ch, func() {
+	return snap, sub.ch, func() {
 		h.mu.Lock()
-		delete(h.subscribers, ch)
-		close(ch)
+		delete(h.subscribers, sub)
+		sub.close()
 		h.mu.Unlock()
 	}
 }
@@ -157,12 +178,14 @@ func (h *Hub) publishLocked(delta Delta) {
 	if h.down && delta.Kind != "down" {
 		return
 	}
-	for ch := range h.subscribers {
+	for sub := range h.subscribers {
 		select {
-		case ch <- delta:
+		case sub.ch <- delta:
 		default:
-			delete(h.subscribers, ch)
-			close(ch)
+			// Slow consumer: drop it and close its channel. The close is
+			// idempotent, so a later unsubscribe cannot close it twice.
+			delete(h.subscribers, sub)
+			sub.close()
 		}
 	}
 }
