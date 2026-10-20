@@ -153,6 +153,28 @@ func (f *FakeGoClaw) RecordedConnectParams() []connectParams {
 	return out
 }
 
+// SetAgents replaces the agents returned by GET /v1/agents (for tests that
+// change tenant state between reconnects).
+func (f *FakeGoClaw) SetAgents(agents []AgentData) {
+	f.mu.Lock()
+	f.cfg.Agents = agents
+	f.mu.Unlock()
+}
+
+// DropConnections force-closes every open WebSocket connection, simulating a
+// gateway restart or a network drop.
+func (f *FakeGoClaw) DropConnections() {
+	f.mu.Lock()
+	conns := make([]*websocket.Conn, 0, len(f.conns))
+	for c := range f.conns {
+		conns = append(conns, c)
+	}
+	f.mu.Unlock()
+	for _, c := range conns {
+		_ = c.Close()
+	}
+}
+
 // BroadcastEvent pushes an event frame to all connected WS clients.
 func (f *FakeGoClaw) BroadcastEvent(event string, payload any) {
 	frame := protocol.NewEvent(event, payload)
@@ -187,8 +209,11 @@ func (f *FakeGoClaw) handleAgents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	f.mu.Lock()
+	agents := append([]AgentData(nil), f.cfg.Agents...)
+	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"agents": f.cfg.Agents})
+	_ = json.NewEncoder(w).Encode(map[string]any{"agents": agents})
 }
 
 func (f *FakeGoClaw) handleTraces(w http.ResponseWriter, r *http.Request) {

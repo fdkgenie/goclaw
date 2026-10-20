@@ -10,6 +10,7 @@ interface StreamEnvelope<T> {
   event: "snapshot" | "delta" | "keepalive" | "down";
   data: {
     version?: number;
+    kind?: string;
     kpi?: T;
   } | null;
 }
@@ -45,7 +46,9 @@ export function useSSE<T>(endpoint = "/api/stream"): UseSSEResult<T> {
           versionRef.current = nextVersion;
           setVersion(nextVersion);
           if (msg.data.kpi) setSnapshot(msg.data.kpi);
-          setStale(false);
+          // A "down" delta means the gateway connection dropped and the
+          // tenant canary has not re-verified: the stream is degraded.
+          setStale(msg.data.kind === "down");
         }
       } catch {
         // ignore malformed frames

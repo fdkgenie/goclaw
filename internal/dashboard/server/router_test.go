@@ -27,6 +27,10 @@ func testRouter(t *testing.T) *Router {
 
 func testRouterWithHub(t *testing.T) (*Router, *live.Hub, *SessionManager) {
 	t.Helper()
+	// The degraded gate is process-wide; make sure a previous test cannot
+	// leak an open breaker into this one.
+	goclaw.Reset()
+	t.Cleanup(goclaw.Reset)
 	cfg := &config.Config{DashboardPassword: "secret"}
 	sm := NewSessionManager(time.Hour)
 	rl := NewRateLimiter(rate.Every(time.Minute), 5)
@@ -206,6 +210,58 @@ func TestStreamAuthenticatedReceivesFrame(t *testing.T) {
 	line := waitFor(`"delta"`)
 	if !strings.Contains(line, `run.started`) {
 		t.Fatalf("delta frame missing event payload: %s", line)
+	}
+}
+
+// TestDegradedGateFailsClosedThenRecovers asserts the fail-closed contract:
+// while the tenant canary is unverified the data API and the SSE stream both
+// answer 503, while the session endpoint stays reachable so the SPA can
+// render its shell.
+func TestDegradedGateFailsClosedThenRecovers(t *testing.T) {
+	router, _, sm := testRouterWithHub(t)
+	tok := sm.Create()
+	cookie := &http.Cookie{Name: sessionCookieName, Value: tok}
+
+	goclaw.SetDegraded("gateway disconnected")
+
+	// Data API fails closed.
+	req := httptest.NewRequest(http.MethodGet, "/api/activity", nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("degraded activity status = %d, want 503", w.Code)
+	}
+
+	// SSE stream fails closed.
+	if got := streamStatus(t, router, cookie); got != http.StatusServiceUnavailable {
+		t.Fatalf("degraded stream status = %d, want 503", got)
+	}
+
+	// The session endpoint stays reachable: the SPA must still know it is
+	// authenticated so it can show the shell instead of the login screen.
+	req = httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("degraded session status = %d, want 200", w.Code)
+	}
+
+	// Unauthenticated callers still get 401, not 503: the gate is an
+	// additional check, not a replacement for the session check.
+	if got := streamStatus(t, router, nil); got != http.StatusUnauthorized {
+		t.Fatalf("degraded anonymous stream status = %d, want 401", got)
+	}
+
+	// After the canary re-verifies, the gate opens again.
+	goclaw.Reset()
+	req = httptest.NewRequest(http.MethodGet, "/api/activity", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("recovered activity status = %d, want 200", w.Code)
 	}
 }
 

@@ -23,7 +23,29 @@ import (
 
 const (
 	sessionMaxAge = 24 * time.Hour
+
+	defaultReconnectMin = 500 * time.Millisecond
+	defaultReconnectMax = 30 * time.Second
 )
+
+// serviceOptions tunes the runtime behaviour of the dashboard daemon. Zero
+// values fall back to production defaults.
+type serviceOptions struct {
+	// ReconnectMin/ReconnectMax bound the gateway WebSocket reconnect
+	// backoff.
+	ReconnectMin time.Duration
+	ReconnectMax time.Duration
+}
+
+func (o serviceOptions) withDefaults() serviceOptions {
+	if o.ReconnectMin <= 0 {
+		o.ReconnectMin = defaultReconnectMin
+	}
+	if o.ReconnectMax <= 0 {
+		o.ReconnectMax = defaultReconnectMax
+	}
+	return o
+}
 
 func main() {
 	webDir := flag.String("web-dir", "", "optional directory to serve dashboard UI from")
@@ -45,18 +67,47 @@ func main() {
 }
 
 func run(ctx context.Context, cfg *config.Config) error {
+	return runWithOptions(ctx, cfg, serviceOptions{})
+}
+
+// runWithOptions wires the gateway client, the live pipeline, and the HTTP
+// server, then blocks until ctx is cancelled.
+//
+// Fail-closed contract: the tenant canary must pass before any data is
+// served. If the gateway connection drops, the circuit breaker opens and the
+// data APIs and the SSE stream answer 503 until the canary re-verifies after
+// a successful reconnect.
+func runWithOptions(ctx context.Context, cfg *config.Config, opts serviceOptions) error {
+	opts = opts.withDefaults()
+
 	slog.Info("starting goclaw-dashboard", "addr", cfg.DashboardAddr, "tenant", cfg.TenantID)
 
 	httpClient := goclaw.NewHTTPClient(cfg.GoClawAPIURL, cfg.GoClawAPIKey, cfg.TenantID.String(), 15*time.Second)
+	state := live.NewState()
+	hub := live.NewHub(state)
 	wsClient := goclaw.NewClient(goclaw.Config{
 		WSURL:        cfg.GoClawWSURL,
 		APIToken:     cfg.GoClawAPIKey,
 		TenantID:     cfg.TenantID,
 		UserID:       "dashboard",
-		ReconnectMin: 500 * time.Millisecond,
-		ReconnectMax: 30 * time.Second,
+		ReconnectMin: opts.ReconnectMin,
+		ReconnectMax: opts.ReconnectMax,
 		OnDisconnect: func(err error) {
+			// The tenant binding is no longer verified: fail closed until the
+			// reconnect canary passes.
 			slog.Warn("dashboard websocket disconnected", "err", err)
+			goclaw.SetDegraded("gateway disconnected: " + err.Error())
+			hub.MarkDegradedAndPublish(err.Error())
+		},
+		OnReconnect: func() error {
+			// Re-run the HTTP tenant canary; the breaker stays open until it
+			// passes, so data APIs and SSE remain fail-closed in the meantime.
+			if err := goclaw.VerifyTenantCanary(ctx, httpClient, cfg.TenantID); err != nil {
+				return err
+			}
+			hub.MarkRecoveredAndPublish()
+			slog.Info("tenant canary re-verified after reconnect", "tenant", cfg.TenantID)
+			return nil
 		},
 	})
 
@@ -79,9 +130,6 @@ func run(ctx context.Context, cfg *config.Config) error {
 		slog.Warn("activity backfill failed", "err", err)
 	}
 
-	// Live state + reconciler + SSE hub.
-	state := live.NewState()
-	hub := live.NewHub(state)
 	reconciler := live.NewReconciler(state, httpClient, hub)
 
 	// Wire the gateway event stream into the live pipeline:
@@ -143,9 +191,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
+		wsClient.Close()
 		return err
 	}
-	wsClient.Close()
+	if err := wsClient.Close(); err != nil {
+		return err
+	}
 	slog.Info("goclaw-dashboard stopped")
 	return nil
 }

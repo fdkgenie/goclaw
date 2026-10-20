@@ -151,3 +151,53 @@ func TestHubMergeAndPublishDelivers(t *testing.T) {
 		t.Fatal("expected a delta on the fresh channel")
 	}
 }
+
+// TestHubDegradedAndRecoveredTransitions covers the gateway outage path: the
+// hub flags the live state degraded and publishes a "down" delta, then clears
+// the flag and marks event-only runs unverified when the tenant canary
+// re-verifies.
+func TestHubDegradedAndRecoveredTransitions(t *testing.T) {
+	state := NewState()
+	hub := NewHub(state)
+	state.ApplyEvent(goclaw.AgentEventPayload{RunID: "r1", AgentID: "a1", Event: "run.started"})
+
+	_, ch, unsub := hub.Subscribe()
+	defer unsub()
+
+	hub.MarkDegradedAndPublish("gateway disconnected")
+	select {
+	case delta := <-ch:
+		if delta.Kind != "down" {
+			t.Fatalf("delta kind = %q, want down", delta.Kind)
+		}
+		if delta.KPI == nil || delta.KPI.Quality != QualityApprox {
+			t.Fatalf("delta KPI = %+v, want approx quality while degraded", delta.KPI)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a down delta")
+	}
+
+	if !state.IsDegraded() {
+		t.Fatal("expected live state to be degraded")
+	}
+
+	hub.MarkRecoveredAndPublish()
+	select {
+	case delta := <-ch:
+		if delta.Kind != "reconnect" {
+			t.Fatalf("delta kind = %q, want reconnect", delta.Kind)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a reconnect delta")
+	}
+
+	if state.IsDegraded() {
+		t.Fatal("expected live state to no longer be degraded")
+	}
+	// The event-only run was not re-confirmed by a trace snapshot, so it must
+	// be reported as unverified (quality approx) until the next epoch.
+	kpi := state.ComputeKPI()
+	if kpi.Quality != QualityApprox {
+		t.Fatalf("kpi quality = %q, want approx while unverified", kpi.Quality)
+	}
+}

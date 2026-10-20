@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 )
 
 const sessionCookieName = "goclaw_dashboard_session"
@@ -52,6 +54,19 @@ func sessionMiddleware(sm *SessionManager, next http.Handler) http.Handler {
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil || !sm.Validate(cookie.Value) {
 			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// degradedMiddleware fails closed while the tenant canary has not re-verified
+// after a gateway disconnect. Data APIs and the SSE stream return 503 until the
+// breaker resets.
+func degradedMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if goclaw.IsDegraded() {
+			http.Error(w, "dashboard degraded: tenant verification pending", http.StatusServiceUnavailable)
 			return
 		}
 		next.ServeHTTP(w, r)

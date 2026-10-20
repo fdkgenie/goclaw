@@ -99,6 +99,27 @@ func (h *Hub) MergeAndPublish(traces []TraceData, complete bool) {
 	h.publishLocked(Delta{Kind: "merge", Payload: map[string]any{"complete": complete, "count": len(traces)}})
 }
 
+// MarkDegradedAndPublish flags the live state as degraded (the gateway
+// connection dropped, so the live data is no longer trustworthy) and
+// publishes a "down" delta under one lock.
+func (h *Hub) MarkDegradedAndPublish(reason string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.state.SetDegraded(true)
+	h.publishLocked(Delta{Kind: "down", Payload: map[string]any{"reason": reason}})
+}
+
+// MarkRecoveredAndPublish clears the degraded flag, marks event-only runs
+// unverified (the trace snapshot has not re-confirmed them yet), and
+// publishes the resulting KPI under one lock.
+func (h *Hub) MarkRecoveredAndPublish() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.state.SetDegraded(false)
+	h.state.MarkUnverified()
+	h.publishLocked(Delta{Kind: "reconnect"})
+}
+
 // ReplayAndMerge atomically replays buffered events, merges a trace snapshot,
 // and publishes a merge delta. Both mutations and publication happen under the
 // hub lock, preserving snapshot+subscribe atomicity.

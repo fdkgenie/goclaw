@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,14 +45,18 @@ type Client struct {
 
 	startMu   sync.Mutex
 	started   bool
-	stopCh    chan struct{}
 	closeOnce sync.Once
 
-	// disconnectCh is closed each time the read loop observes a disconnect,
-	// signaling the supervisor to reconnect.
-	disconnectCh chan struct{}
-
 	onDisconnect func(error)
+
+	// runCancel stops the supervisor goroutine; runDone is closed when it
+	// returns, so Close can wait for a deterministic shutdown.
+	runCancel context.CancelFunc
+	runDone   chan struct{}
+
+	// closed is set by Close so the read loop does not report a disconnect
+	// during a deliberate shutdown.
+	closed atomic.Bool
 }
 
 // Config configures the WS client.
@@ -63,6 +68,11 @@ type Config struct {
 	ReconnectMin time.Duration
 	ReconnectMax time.Duration
 	OnDisconnect func(error)
+	// OnReconnect runs after every successful reconnect handshake (not the
+	// initial connect). A non-nil error fails the reconnect and keeps the
+	// client backing off, so the service stays fail-closed until verification
+	// passes.
+	OnReconnect func() error
 }
 
 // ResponseFrame is a protocol response received from the gateway.
@@ -80,12 +90,10 @@ func NewClient(cfg Config) *Client {
 		cfg.ReconnectMax = defaultReconnectMax
 	}
 	return &Client{
-		cfg:          cfg,
-		dialer:       &websocket.Dialer{},
-		pending:      make(map[string]chan *ResponseFrame),
-		subs:         make(map[string][]chan *EventFrame),
-		stopCh:       make(chan struct{}),
-		disconnectCh: make(chan struct{}, 1),
+		cfg:     cfg,
+		dialer:  &websocket.Dialer{},
+		pending: make(map[string]chan *ResponseFrame),
+		subs:    make(map[string][]chan *EventFrame),
 	}
 }
 
@@ -99,6 +107,10 @@ func (c *Client) Connect(ctx context.Context) error {
 		c.startMu.Unlock()
 		return fmt.Errorf("already started")
 	}
+	if c.closed.Load() {
+		c.startMu.Unlock()
+		return fmt.Errorf("client is closed")
+	}
 	c.started = true
 	c.startMu.Unlock()
 
@@ -107,14 +119,24 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	// Background supervisor: read loop + reconnect on disconnect.
-	go c.run(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	c.startMu.Lock()
+	c.runCancel = cancel
+	c.runDone = make(chan struct{})
+	c.startMu.Unlock()
+	go c.run(runCtx)
 
 	return nil
 }
 
 // run supervises the read loop: on disconnect it backs off and re-performs
-// the connect handshake (re-verifying capabilities) until ctx is done.
+// the connect handshake (re-verifying capabilities) until ctx is done. After
+// every successful reconnect handshake it runs the OnReconnect verification
+// hook; a hook error fails the reconnect, so the caller stays fail-closed
+// until verification passes.
 func (c *Client) run(ctx context.Context) {
+	defer close(c.runDone)
+
 	delay := c.cfg.ReconnectMin
 	for {
 		c.readLoop(ctx)
@@ -132,6 +154,16 @@ func (c *Client) run(ctx context.Context) {
 		if err := c.connectOnce(ctx); err != nil {
 			// Handshake failed; keep backing off and retrying.
 			continue
+		}
+		if c.cfg.OnReconnect != nil {
+			if err := c.cfg.OnReconnect(); err != nil {
+				c.closeConn()
+				c.setConnected(false)
+				if c.cfg.OnDisconnect != nil && !c.closed.Load() {
+					c.cfg.OnDisconnect(err)
+				}
+				continue
+			}
 		}
 		delay = c.cfg.ReconnectMin
 	}
@@ -221,17 +253,18 @@ func (c *Client) connectOnce(ctx context.Context) error {
 }
 
 // readLoop reads frames from the connection until it closes or ctx is done.
-// On exit it closes disconnectCh (once) to signal the supervisor.
+// On exit it closes disconnectCh (once) to signal the supervisor and reports
+// the underlying read error through OnDisconnect.
 func (c *Client) readLoop(ctx context.Context) {
+	var readErr error
 	defer func() {
 		c.closeConn()
 		c.setConnected(false)
-		select {
-		case c.disconnectCh <- struct{}{}:
-		default:
-		}
-		if c.cfg.OnDisconnect != nil {
-			c.cfg.OnDisconnect(context.Canceled)
+		if c.cfg.OnDisconnect != nil && !c.closed.Load() {
+			if readErr == nil {
+				readErr = context.Canceled
+			}
+			c.cfg.OnDisconnect(readErr)
 		}
 	}()
 
@@ -250,6 +283,7 @@ func (c *Client) readLoop(ctx context.Context) {
 		conn.SetReadDeadline(time.Now().Add(readDeadline))
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
+			readErr = err
 			return // disconnect
 		}
 
@@ -366,10 +400,25 @@ func (c *Client) Connected() bool {
 	return c.connected
 }
 
-// Close shuts down the client and closes the connection.
+// Close shuts down the client: it stops the reconnect supervisor, closes the
+// connection, and waits for the supervisor goroutine to return so no
+// reconnect can be attempted after Close.
 func (c *Client) Close() error {
-	c.closeOnce.Do(func() { close(c.stopCh) })
+	c.startMu.Lock()
+	cancel := c.runCancel
+	done := c.runDone
+	c.startMu.Unlock()
+
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		if cancel != nil {
+			cancel()
+		}
+	})
 	c.closeConn()
+	if done != nil {
+		<-done
+	}
 	return nil
 }
 

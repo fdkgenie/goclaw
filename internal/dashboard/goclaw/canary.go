@@ -41,8 +41,9 @@ func (b *CircuitBreaker) SetDegraded(reason string) {
 	b.degraded = true
 	b.reason = reason
 	b.at = time.Now()
+	at := b.at
 	b.mu.Unlock()
-	slog.Warn("security.dashboard.tenant_mismatch", "reason", reason, "at", b.at)
+	slog.Warn("security.dashboard.tenant_mismatch", "reason", reason, "at", at)
 }
 
 // Reset closes the breaker, restoring normal operation (successful reconnect).

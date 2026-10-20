@@ -50,12 +50,16 @@ func NewRouter(cfg *config.Config, state *live.State, ws *goclaw.Client, httpCli
 	r.mux.HandleFunc("POST /api/login", r.loginHandler)
 	r.mux.HandleFunc("POST /api/logout", r.logoutHandler)
 
-	// Authenticated API (session + CSRF).
-	auth := sessionMiddleware(sm, http.HandlerFunc(r.apiHandler))
+	// Session state stays available while degraded so the SPA can decide
+	// whether to show the login screen instead of the data shell.
+	r.mux.Handle("GET /api/session", sessionMiddleware(sm, http.HandlerFunc(r.handleSession)))
+
+	// Authenticated data API (session + CSRF + fail-closed degrade gate).
+	auth := sessionMiddleware(sm, degradedMiddleware(http.HandlerFunc(r.apiHandler)))
 	r.mux.Handle("/api/", csrfMiddleware(auth))
 
-	// SSE stream (authenticated, no CSRF since it's GET).
-	r.mux.Handle("GET /api/stream", sessionMiddleware(sm, http.HandlerFunc(r.hub.ServeHTTP)))
+	// SSE stream (authenticated, no CSRF since it's GET; fail-closed gate).
+	r.mux.Handle("GET /api/stream", sessionMiddleware(sm, degradedMiddleware(http.HandlerFunc(r.hub.ServeHTTP))))
 
 	// Static fallback (no auth for the app shell; API paths are protected).
 	r.mux.HandleFunc("/", r.staticHandler)
@@ -71,8 +75,6 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // apiHandler dispatches authenticated API endpoints.
 func (r *Router) apiHandler(w http.ResponseWriter, req *http.Request) {
 	switch req.URL.Path {
-	case "/api/session":
-		r.writeJSON(w, map[string]bool{"authenticated": true})
 	case "/api/overview":
 		r.handleOverview(w, req)
 	case "/api/orgchart":
@@ -84,6 +86,10 @@ func (r *Router) apiHandler(w http.ResponseWriter, req *http.Request) {
 	default:
 		http.NotFound(w, req)
 	}
+}
+
+func (r *Router) handleSession(w http.ResponseWriter, _ *http.Request) {
+	r.writeJSON(w, map[string]bool{"authenticated": true})
 }
 
 func (r *Router) writeJSON(w http.ResponseWriter, v any) {
