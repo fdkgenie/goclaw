@@ -31,6 +31,10 @@ type Reconciler struct {
 	http  *goclaw.HTTPClient
 	hub   *Hub
 
+	// Interval overrides the reconcile period. Zero means the default
+	// reconcileInterval; tests shorten it to exercise the loop.
+	Interval time.Duration
+
 	// eventBuf holds WS events received while a snapshot is being fetched.
 	eventBuf []goclaw.AgentEventPayload
 	bufMu    sync.Mutex
@@ -172,14 +176,24 @@ func (r *Reconciler) RunEpoch(ctx context.Context) bool {
 
 // Run starts the periodic reconcile loop (every reconcileInterval) until ctx
 // is cancelled.
+//
+// Every tick also expires the live state: event-only runs that stopped
+// receiving events are marked unverified and then dropped, and expired
+// tombstones are removed. Without it a long-lived dashboard accumulated
+// event-only entries and tombstones forever.
 func (r *Reconciler) Run(ctx context.Context) {
-	ticker := time.NewTicker(reconcileInterval)
+	interval := r.Interval
+	if interval <= 0 {
+		interval = reconcileInterval
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			r.state.Expire()
 			r.RunEpoch(ctx)
 		}
 	}

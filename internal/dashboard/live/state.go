@@ -240,13 +240,26 @@ func (s *State) MarkUnverified() {
 
 // Expire purges event_only entries that have had no event for too long, and
 // removes expired tombstones.
+//
+// An event_only run that stopped receiving events is first marked unverified
+// (after eventOnlyUnverifiedAfter), then dropped (after eventOnlyPurgeAfter).
+// Traced entries are never expired here: they are pruned by the snapshot
+// algorithm, which knows whether the snapshot was complete.
 func (s *State) Expire() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := now()
 	for key, e := range s.entries {
-		if e.Class == ClassEventOnly && now.Sub(e.LastEventAt) > eventOnlyPurgeAfter {
+		if e.Class != ClassEventOnly {
+			continue
+		}
+		age := now.Sub(e.LastEventAt)
+		if age > eventOnlyPurgeAfter {
 			delete(s.entries, key)
+			continue
+		}
+		if !e.Unverified && age > eventOnlyUnverifiedAfter {
+			e.Unverified = true
 		}
 	}
 	for key, t := range s.tombstones {

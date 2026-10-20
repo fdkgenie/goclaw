@@ -327,3 +327,53 @@ func TestKPIQualitySeparateTracedAndTotal(t *testing.T) {
 		}
 	})
 }
+
+// TestExpireMarksUnverifiedThenPurges pins the expiry ladder of the
+// event-only runs: no event for 30 minutes marks the entry unverified, no
+// event for 60 minutes drops it.
+func TestExpireMarksUnverifiedThenPurges(t *testing.T) {
+	s := NewState()
+	s.ApplyEvent(event("r1", "", "run.started", "a1", "team1"))
+
+	// No event for 45 minutes: unverified but still counted.
+	s.mu.Lock()
+	s.entries[runKey("r1")].LastEventAt = time.Now().Add(-45 * time.Minute)
+	s.mu.Unlock()
+	s.Expire()
+
+	e := s.entries[runKey("r1")]
+	if e == nil {
+		t.Fatal("event-only run was dropped before the purge window")
+	}
+	if !e.Unverified {
+		t.Error("event-only run was not marked unverified")
+	}
+
+	// No event for 90 minutes: dropped.
+	s.mu.Lock()
+	s.entries[runKey("r1")].LastEventAt = time.Now().Add(-90 * time.Minute)
+	s.mu.Unlock()
+	s.Expire()
+
+	if e := s.entries[runKey("r1")]; e != nil {
+		t.Fatal("event-only run was not dropped after the purge window")
+	}
+}
+
+// TestExpireRemovesExpiredTombstones pins the tombstone TTL cleanup.
+func TestExpireRemovesExpiredTombstones(t *testing.T) {
+	s := NewState()
+	s.ApplyEvent(event("r1", "t1", "run.completed", "a1", "team1"))
+	if _, ok := s.tombstones[runKey("r1")]; !ok {
+		t.Fatal("expected a tombstone for the terminated run")
+	}
+
+	s.mu.Lock()
+	s.tombstones[runKey("r1")] = time.Now().Add(-2 * tombstoneTTL)
+	s.mu.Unlock()
+	s.Expire()
+
+	if _, ok := s.tombstones[runKey("r1")]; ok {
+		t.Fatal("expired tombstone was not removed")
+	}
+}

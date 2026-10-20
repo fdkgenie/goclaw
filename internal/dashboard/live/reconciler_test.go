@@ -179,3 +179,31 @@ func TestBufferOverflowCancelsEpoch(t *testing.T) {
 		t.Fatal("expected buffer overflow to reject event")
 	}
 }
+
+// TestReconcileLoopExpiresState proves the reconcile loop performs the TTL
+// cleanup: Expire used to run only in tests, so a long-lived dashboard
+// accumulated event-only runs and tombstones forever.
+func TestReconcileLoopExpiresState(t *testing.T) {
+	tenantID := mustParseUUIDLive(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+	f := testutil.NewFakeGoClaw(t, testutil.Config{TenantID: tenantID})
+	rec, state := newTestReconciler(t, f, tenantID)
+	rec.Interval = 10 * time.Millisecond
+
+	state.ApplyEvent(goclaw.AgentEventPayload{RunID: "r1", Event: "run.started", Timestamp: time.Now()})
+	state.mu.Lock()
+	state.entries[runKey("r1")].LastEventAt = time.Now().Add(-2 * eventOnlyPurgeAfter)
+	state.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go rec.Run(ctx)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if state.Len() == 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("the reconcile loop never expired the stale event-only run (entries = %d)", state.Len())
+}
