@@ -13,6 +13,7 @@ import (
 
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/config"
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/testutil"
+	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
 func TestMainIntegrationSmoke(t *testing.T) {
@@ -24,10 +25,10 @@ func TestMainIntegrationSmoke(t *testing.T) {
 		TenantID: tenantID,
 		IsOwner:  false,
 		Capabilities: []string{
-			"events.cron_heartbeat_tenant_scoped",
-			"events.team_link_tenant_tagged",
-			"usage.events.team",
-			"teams.tasks.list.has_more",
+			protocol.CapEventsCronHeartbeatTenantScoped,
+			protocol.CapEventsTeamLinkTenantTagged,
+			protocol.CapUsageEventsTeam,
+			protocol.CapTeamsTasksListHasMore,
 		},
 		RPCPayloads: map[string]any{
 			"teams.tasks.list": map[string]any{

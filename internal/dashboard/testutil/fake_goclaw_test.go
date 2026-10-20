@@ -68,9 +68,9 @@ func TestFakeGoClawHTTPAndWS(t *testing.T) {
 		IsOwner:  false,
 		Capabilities: []string{
 			protocol.CapEventsCronHeartbeatTenantScoped,
-			"events.team_link_tenant_tagged",
-			"usage.events.team",
-			"teams.tasks.list.has_more",
+			protocol.CapEventsTeamLinkTenantTagged,
+			protocol.CapUsageEventsTeam,
+			protocol.CapTeamsTasksListHasMore,
 		},
 		Agents: []AgentData{
 			{ID: "a1", Name: "Agent 1", TenantID: tenantID.String(), Role: "member", Model: "gpt-4", Status: "active"},
@@ -150,7 +150,7 @@ func TestFakeGoClawMissingCapability(t *testing.T) {
 		Role:         "admin",
 		TenantID:     tenantID,
 		IsOwner:      false,
-		Capabilities: []string{"events.cron_heartbeat_tenant_scoped"}, // missing others
+		Capabilities: []string{protocol.CapEventsCronHeartbeatTenantScoped}, // missing others
 		Agents:       []AgentData{},
 	})
 	conn := mustDialWS(t, f)
@@ -159,7 +159,7 @@ func TestFakeGoClawMissingCapability(t *testing.T) {
 	caps, _ := server["capabilities"].([]any)
 	found := false
 	for _, c := range caps {
-		if c == "teams.tasks.list.has_more" {
+		if c == protocol.CapTeamsTasksListHasMore {
 			found = true
 		}
 	}

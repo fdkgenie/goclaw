@@ -17,16 +17,12 @@ import (
 )
 
 // RequiredCapabilities lists the gateway capabilities the dashboard requires
-// at connect handshake. The first is defined by B1 in pkg/protocol; the
-// remaining three are B2 contracts (teams.tasks.list.has_more,
-// usage.events.team, events.team_link_tenant_tagged). They are declared here
-// as local strings mirroring the expected B2 constant values so this package
-// compiles against the pre-B2 base and feature-gates/detects them at runtime.
+// at connect handshake. All are exported by pkg/protocol (B1 + B2 contracts).
 var RequiredCapabilities = []string{
-	protocol.CapEventsCronHeartbeatTenantScoped, // "events.cron_heartbeat_tenant_scoped" (B1)
-	"events.team_link_tenant_tagged",            // B2
-	"usage.events.team",                         // B2
-	"teams.tasks.list.has_more",                 // B2
+	protocol.CapEventsCronHeartbeatTenantScoped,
+	protocol.CapEventsTeamLinkTenantTagged,
+	protocol.CapUsageEventsTeam,
+	protocol.CapTeamsTasksListHasMore,
 }
 
 // ConnectResponse is the dashboard-owned DTO for the WS connect response.
