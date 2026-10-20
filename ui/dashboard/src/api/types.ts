@@ -3,17 +3,24 @@ export interface TaskKPI {
   exact: boolean;
 }
 
+export interface StatusTaskKPI {
+  status: string;
+  count: TaskKPI;
+}
+
 export interface TeamTaskKPI {
   team_id: string;
   team_name?: string;
   active: TaskKPI;
   in_review: TaskKPI;
+  active_by_status: StatusTaskKPI[];
 }
 
 export interface TaskKPIResult {
   teams: TeamTaskKPI[];
   total_active: TaskKPI;
   total_in_review: TaskKPI;
+  active_by_status: StatusTaskKPI[];
 }
 
 export interface CostBreakdownRow {

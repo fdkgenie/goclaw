@@ -10,12 +10,23 @@ type TaskKPI struct {
 	Exact bool `json:"exact"`
 }
 
+// StatusTaskKPI is the count of the tasks in one status. The value is the
+// observed count; when the query that produced it was truncated the count is
+// a lower bound (exact=false).
+type StatusTaskKPI struct {
+	Status string  `json:"status"`
+	Count  TaskKPI `json:"count"`
+}
+
 // TeamTaskKPI is the task KPI for a single team.
 type TeamTaskKPI struct {
 	TeamID   string  `json:"team_id"`
 	TeamName string  `json:"team_name,omitempty"`
 	Active   TaskKPI `json:"active"`
 	InReview TaskKPI `json:"in_review"`
+	// ActiveByStatus groups the active tasks by status. Every group is a
+	// lower bound when the active query was truncated.
+	ActiveByStatus []StatusTaskKPI `json:"active_by_status"`
 }
 
 // TaskKPIResult aggregates task KPIs across teams.
@@ -23,6 +34,9 @@ type TaskKPIResult struct {
 	Teams         []TeamTaskKPI `json:"teams"`
 	TotalActive   TaskKPI       `json:"total_active"`
 	TotalInReview TaskKPI       `json:"total_in_review"`
+	// ActiveByStatus groups the active tasks of every team by status. Every
+	// group is a lower bound when any team query was truncated.
+	ActiveByStatus []StatusTaskKPI `json:"active_by_status"`
 }
 
 // CostBreakdownRow is a single row in a cost breakdown.

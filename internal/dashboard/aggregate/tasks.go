@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/nextlevelbuilder/goclaw/internal/dashboard/goclaw"
 )
@@ -17,19 +18,29 @@ type TeamRef struct {
 
 // tasksListResponse is the gateway teams.tasks.list response envelope.
 type tasksListResponse struct {
-	Tasks   []interface{} `json:"tasks"`
+	Tasks   []taskSummary `json:"tasks"`
 	HasMore bool          `json:"hasMore"`
+}
+
+// taskSummary carries the task fields the dashboard groups by.
+type taskSummary struct {
+	Status string `json:"status"`
 }
 
 // TaskKPIs queries teams.tasks.list for active and in_review tasks per team
 // and returns {value, exact} KPIs. value is the observed count; exact is false
 // when hasMore is true (truncated, so value is a lower bound).
+//
+// The active query is also grouped per status. When the query is truncated
+// every group is a lower bound of its own observed count (not of the query
+// cap), because the hidden rows can hold any status.
 func TaskKPIs(ctx context.Context, client *goclaw.Client, teams []TeamRef) (*TaskKPIResult, error) {
 	result := &TaskKPIResult{
 		Teams:         make([]TeamTaskKPI, 0, len(teams)),
 		TotalActive:   TaskKPI{Exact: true},
 		TotalInReview: TaskKPI{Exact: true},
 	}
+	aggregateCounts := make(map[string]int)
 
 	for _, team := range teams {
 		ttk := TeamTaskKPI{
@@ -46,15 +57,19 @@ func TaskKPIs(ctx context.Context, client *goclaw.Client, teams []TeamRef) (*Tas
 			if err != nil {
 				return nil, fmt.Errorf("teams.tasks.list team=%s status=%s: %w", team.ID, status, err)
 			}
-			kpi, err := taskKPIFromResponse(resp)
+			kpi, counts, err := taskKPIFromResponse(resp)
 			if err != nil {
 				return nil, fmt.Errorf("teams.tasks.list team=%s status=%s: %w", team.ID, status, err)
 			}
 			if status == "active" {
 				ttk.Active = kpi
+				ttk.ActiveByStatus = statusKPIs(counts, kpi.Exact)
 				result.TotalActive.Value += kpi.Value
 				if !kpi.Exact {
 					result.TotalActive.Exact = false
+				}
+				for _, g := range ttk.ActiveByStatus {
+					aggregateCounts[g.Status] += g.Count.Value
 				}
 			} else {
 				ttk.InReview = kpi
@@ -66,6 +81,9 @@ func TaskKPIs(ctx context.Context, client *goclaw.Client, teams []TeamRef) (*Tas
 		}
 		result.Teams = append(result.Teams, ttk)
 	}
+	// A truncated team query hides rows of any status, so every aggregate
+	// group is a lower bound as soon as one team was truncated.
+	result.ActiveByStatus = statusKPIs(aggregateCounts, result.TotalActive.Exact)
 	return result, nil
 }
 
@@ -77,15 +95,16 @@ func unmarshalPayload(payload any, out any) error {
 	return json.Unmarshal(b, out)
 }
 
-// taskKPIFromResponse turns a teams.tasks.list response into a task KPI.
+// taskKPIFromResponse turns a teams.tasks.list response into a task KPI and
+// the observed per-status counts.
 //
 // A failed gateway response carries no task list, so the count is unknown:
 // the KPI is reported as a lower bound (exact=false) instead of a confident
 // zero. Decoding an error payload produced a zero-value struct that was then
 // reported as exact.
-func taskKPIFromResponse(resp *goclaw.ResponseFrame) (TaskKPI, error) {
+func taskKPIFromResponse(resp *goclaw.ResponseFrame) (TaskKPI, map[string]int, error) {
 	if resp == nil {
-		return TaskKPI{Exact: false}, fmt.Errorf("empty response")
+		return TaskKPI{Exact: false}, nil, fmt.Errorf("empty response")
 	}
 	if !resp.OK {
 		code, message := "", ""
@@ -96,11 +115,41 @@ func taskKPIFromResponse(resp *goclaw.ResponseFrame) (TaskKPI, error) {
 			"code", code,
 			"message", message,
 		)
-		return TaskKPI{Exact: false}, nil
+		return TaskKPI{Exact: false}, nil, nil
 	}
 	var parsed tasksListResponse
 	if err := unmarshalPayload(resp.Payload, &parsed); err != nil {
-		return TaskKPI{}, fmt.Errorf("parse payload: %w", err)
+		return TaskKPI{}, nil, fmt.Errorf("parse payload: %w", err)
 	}
-	return TaskKPI{Value: len(parsed.Tasks), Exact: !parsed.HasMore}, nil
+	counts := make(map[string]int, len(parsed.Tasks))
+	for _, task := range parsed.Tasks {
+		if task.Status == "" {
+			continue
+		}
+		counts[task.Status]++
+	}
+	return TaskKPI{Value: len(parsed.Tasks), Exact: !parsed.HasMore}, counts, nil
+}
+
+// statusKPIs converts the observed per-status counts into KPI groups, sorted
+// by status name so the output is stable. When the query was truncated every
+// group carries the lower-bound flag.
+func statusKPIs(counts map[string]int, exact bool) []StatusTaskKPI {
+	out := make([]StatusTaskKPI, 0, len(counts))
+	for _, status := range sortedKeys(counts) {
+		out = append(out, StatusTaskKPI{
+			Status: status,
+			Count:  TaskKPI{Value: counts[status], Exact: exact},
+		})
+	}
+	return out
+}
+
+func sortedKeys(counts map[string]int) []string {
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

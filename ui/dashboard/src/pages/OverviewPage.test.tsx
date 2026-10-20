@@ -26,6 +26,7 @@ function emptyOverview(): OverviewKPI {
       teams: [],
       total_active: { value: 0, exact: true },
       total_in_review: { value: 0, exact: true },
+      active_by_status: [],
     },
     cost: { summary_usd: 0, calls: 0, rows: [] },
   };
@@ -85,6 +86,24 @@ describe("OverviewPage", () => {
     expect(container.querySelector('[data-testid="tasks-active"]')?.textContent).toBe("7");
     expect(container.querySelector('[data-testid="tasks-in-review"]')?.textContent).toContain("2");
     expect(container.querySelector('[data-testid="cost-total"]')?.textContent).toBe("$42.50");
+  });
+
+  it("renders the per-status task groups with the lower bound marker", async () => {
+    const overview = emptyOverview();
+    overview.task_kpi.total_active = { value: 200, exact: false };
+    overview.task_kpi.active_by_status = [
+      { status: "in_progress", count: { value: 120, exact: false } },
+      { status: "pending", count: { value: 50, exact: false } },
+      { status: "blocked", count: { value: 30, exact: false } },
+    ];
+    mockOverview(overview);
+
+    await render(null);
+
+    const groups = container.querySelector('[data-testid="tasks-by-status"]')?.textContent ?? "";
+    expect(groups).toContain("in_progress: ≥120");
+    expect(groups).toContain("pending: ≥50");
+    expect(groups).toContain("blocked: ≥30");
   });
 
   it("requests the overview endpoint", async () => {

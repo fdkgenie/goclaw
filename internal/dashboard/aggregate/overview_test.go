@@ -20,7 +20,11 @@ func TestOverviewComposite(t *testing.T) {
 		Capabilities: goclaw.RequiredCapabilities,
 		RPCPayloads: map[string]any{
 			"teams.tasks.list": map[string]any{
-				"tasks":   []interface{}{1, 2, 3},
+				"tasks": []interface{}{
+					map[string]any{"status": "in_progress"},
+					map[string]any{"status": "pending"},
+					map[string]any{"status": "in_progress"},
+				},
 				"hasMore": false,
 			},
 		},

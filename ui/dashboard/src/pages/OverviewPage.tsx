@@ -47,6 +47,7 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
   const taskKPI = overview?.task_kpi;
   const activeTasks = taskKPI?.total_active;
   const inReview = taskKPI?.total_in_review;
+  const statusGroups = taskKPI?.active_by_status ?? [];
   const costUSD = overview?.cost?.summary_usd;
 
   return (
@@ -74,6 +75,15 @@ export const OverviewPage = ({ snapshot }: OverviewPageProps): React.ReactNode =
         <div className="text-sm text-slate-500 mt-1" data-testid="tasks-in-review">
           {t("overview.in_review")}: {inReview ? fmt(inReview.value, inReview.exact) : "—"}
         </div>
+        {statusGroups.length > 0 && (
+          <ul className="mt-2 text-xs text-slate-500" data-testid="tasks-by-status">
+            {statusGroups.map((g) => (
+              <li key={g.status}>
+                {g.status}: {fmt(g.count.value, g.count.exact)}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="card">
