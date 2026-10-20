@@ -33,6 +33,7 @@ app
 browser-poc
 openclaw-go
 goclaw
+!internal/dashboard/goclaw/
 /config.json
 prompt.md
 *.bk.*
