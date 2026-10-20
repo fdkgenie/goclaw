@@ -120,3 +120,58 @@ func TestMigration000100_UpAndDown(t *testing.T) {
 		t.Fatalf("tenant1 rollups after re-up = %#v, want \"\":1 teamA:2 teamB:4", afterUp)
 	}
 }
+
+func TestMigration000100_CutoffSkipsOpenHour(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	db := hooksTestDB(t)
+	tenantID, agentID := seedTenantAndAgent(t, db)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM usage_events WHERE tenant_id = $1", tenantID)
+		db.Exec("DELETE FROM usage_event_rollups WHERE tenant_id = $1", tenantID)
+	})
+
+	m, err := migrate.New("file://../../../migrations", os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer m.Close()
+	if err := m.Migrate(99); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate to 99: %v", err)
+	}
+
+	closed := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
+	open := closed.Add(time.Hour)
+	insert := func(bucket time.Time, cost float64) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO usage_events
+			(id, tenant_id, event_time, bucket_hour, event_type, resource_type, resource_name, agent_id, cost_usd, call_count)
+			VALUES ($1,$2,$3,$4,'llm_call','model','claude-3-5',$5,$6,1)`,
+			uuid.New(), tenantID, bucket.Add(5*time.Minute), bucket, agentID, cost); err != nil {
+			t.Fatalf("insert usage_event: %v", err)
+		}
+	}
+	insert(closed, 2)
+	insert(open, 8)
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate up to 100: %v", err)
+	}
+
+	count := func(bucket time.Time) int {
+		t.Helper()
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM usage_event_rollups
+			WHERE tenant_id = $1 AND bucket_hour = $2`, tenantID, bucket).Scan(&n); err != nil {
+			t.Fatalf("count rollups: %v", err)
+		}
+		return n
+	}
+	if got := count(closed); got != 1 {
+		t.Fatalf("closed-hour rollups = %d, want 1", got)
+	}
+	if got := count(open); got != 0 {
+		t.Fatalf("open-hour rollups = %d, want 0 (migration cutoff)", got)
+	}
+}

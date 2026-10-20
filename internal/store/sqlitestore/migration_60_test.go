@@ -86,3 +86,48 @@ func TestSQLiteMigration60to61(t *testing.T) {
 		t.Fatalf("idx_usage_event_rollups_tenant_team_hour missing")
 	}
 }
+
+func TestSQLiteMigration60CutoffSkipsOpenHour(t *testing.T) {
+	db := openTestDBAtVersion(t, 60)
+	tenantID := store.MasterTenantID
+
+	closed := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
+	open := closed.Add(time.Hour)
+	insert := func(bucket time.Time, cost float64) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO usage_events
+			(id, tenant_id, event_time, bucket_hour, event_type, resource_type, resource_name, cost_usd, call_count)
+			VALUES (?, ?, ?, ?, 'tool_call', 'tool', 'bash', ?, 1)`,
+			uuid.New().String(), tenantID.String(),
+			bucket.Add(5*time.Minute).Format(time.RFC3339),
+			bucket.Format(time.RFC3339), cost); err != nil {
+			t.Fatalf("insert usage_event: %v", err)
+		}
+	}
+	insert(closed, 2)
+	insert(open, 8)
+
+	if err := EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+
+	count := func(bucket time.Time) (int, float64) {
+		t.Helper()
+		var rows int
+		var cost float64
+		if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(cost_usd), 0)
+			FROM usage_event_rollups
+			WHERE tenant_id = ?
+			  AND substr(replace(bucket_hour, 'T', ' '), 1, 19) = ?`,
+			tenantID.String(), bucket.Format("2006-01-02 15:04:05")).Scan(&rows, &cost); err != nil {
+			t.Fatalf("count rollups: %v", err)
+		}
+		return rows, cost
+	}
+	if rows, cost := count(closed); rows != 1 || cost != 2 {
+		t.Fatalf("closed-hour rollups = (%d,%v), want (1,2)", rows, cost)
+	}
+	if rows, _ := count(open); rows != 0 {
+		t.Fatalf("open-hour rollups = %d, want 0 (migration cutoff)", rows)
+	}
+}
