@@ -38,6 +38,11 @@ type Hub struct {
 	version     uint64
 	subscribers map[chan Delta]struct{}
 	state       *State
+
+	// down is set when the gateway connection dropped (the terminal "down"
+	// state). While down, no further data frames are published: subscribers
+	// only receive the terminal "down" frame and the stream is closed.
+	down bool
 }
 
 // NewHub creates a Hub over the given State.
@@ -102,9 +107,13 @@ func (h *Hub) MergeAndPublish(traces []TraceData, complete bool) {
 // MarkDegradedAndPublish flags the live state as degraded (the gateway
 // connection dropped, so the live data is no longer trustworthy) and
 // publishes a "down" delta under one lock.
+//
+// The down state is terminal for the current streams: once the "down" delta
+// is published, no further data frames are published to subscribers.
 func (h *Hub) MarkDegradedAndPublish(reason string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.down = true
 	h.state.SetDegraded(true)
 	h.publishLocked(Delta{Kind: "down", Payload: map[string]any{"reason": reason}})
 }
@@ -115,6 +124,7 @@ func (h *Hub) MarkDegradedAndPublish(reason string) {
 func (h *Hub) MarkRecoveredAndPublish() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.down = false
 	h.state.SetDegraded(false)
 	h.state.MarkUnverified()
 	h.publishLocked(Delta{Kind: "reconnect"})
@@ -134,11 +144,19 @@ func (h *Hub) ReplayAndMerge(events []goclaw.AgentEventPayload, traces []TraceDa
 }
 
 // publishLocked assumes h.mu is held.
+//
+// While the hub is down (the gateway connection dropped) the live data is no
+// longer trustworthy: only the terminal "down" frame is published. Every
+// other delta is dropped so subscribers never observe a data frame after the
+// down state.
 func (h *Hub) publishLocked(delta Delta) {
 	h.version++
 	delta.Version = h.version
 	kpi := h.state.ComputeKPI()
 	delta.KPI = &kpi
+	if h.down && delta.Kind != "down" {
+		return
+	}
 	for ch := range h.subscribers {
 		select {
 		case ch <- delta:
@@ -195,6 +213,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			b, _ = json.Marshal(map[string]any{"event": "delta", "data": delta})
 			w.Write(append(append([]byte("data: "), b...), '\n', '\n'))
 			flusher.Flush()
+			if delta.Kind == "down" {
+				// Terminal frame: the gateway connection dropped and the
+				// tenant canary has not re-verified. Close the stream so the
+				// client observes no further data frames.
+				return
+			}
 		}
 	}
 }
