@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/nextlevelbuilder/goclaw/internal/providers/acp"
@@ -41,6 +42,21 @@ func TestACPProgressThinking(t *testing.T) {
 	if got := acpProgressThinking(plan, seen); got != "\n📋 Plan:\n- [in_progress] build\n" {
 		t.Fatalf("plan: got %q", got)
 	}
+	// Plan sent again with no changes is deduped.
+	if got := acpProgressThinking(plan, seen); got != "" {
+		t.Fatalf("identical plan should be deduped, got %q", got)
+	}
+
+	// Thought chunk with stripThinking=true is suppressed.
+	if got := acpProgressThinking(thought, seen, true); got != "" {
+		t.Fatalf("thought chunk with stripThinking should be empty, got %q", got)
+	}
+
+	// Missing toolCallId and empty label is suppressed.
+	unlabelled := progressUpdate(t, `{"sessionId":"s","update":{"sessionUpdate":"tool_call_update","status":"completed"}}`)
+	if got := acpProgressThinking(unlabelled, seen); got != "" {
+		t.Fatalf("unlabelled tool update should be suppressed, got %q", got)
+	}
 
 	// Message chunks are handled by the Content path, not surfaced as thinking.
 	msg := progressUpdate(t, `{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}}}`)
@@ -53,5 +69,38 @@ func TestSessionUpdateContentTextArray(t *testing.T) {
 	u := progressUpdate(t, `{"update":{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`)
 	if got := u.ContentText(); got != "ab" {
 		t.Fatalf("got %q", got)
+	}
+
+	empty := progressUpdate(t, `{"update":{}}`)
+	if got := empty.ContentText(); got != "" {
+		t.Fatalf("empty content should yield empty string, got %q", got)
+	}
+}
+
+func TestACPProgressPlanCapping(t *testing.T) {
+	seen := map[string]string{}
+	// Plan with 15 entries should be capped at 10 plus count note
+	var entries []map[string]string
+	for i := 1; i <= 15; i++ {
+		entries = append(entries, map[string]string{
+			"content":  "task",
+			"status":   "in_progress",
+			"priority": "normal",
+		})
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"sessionId": "s",
+		"update": map[string]any{
+			"sessionUpdate": "plan",
+			"entries":       entries,
+		},
+	})
+	plan := progressUpdate(t, string(raw))
+	got := acpProgressThinking(plan, seen)
+	if got == "" {
+		t.Fatal("expected rendered plan")
+	}
+	if !strings.Contains(got, "(+5 more)") {
+		t.Fatalf("expected plan capping note (+5 more), got %q", got)
 	}
 }
