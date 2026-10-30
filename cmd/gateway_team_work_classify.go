@@ -51,9 +51,9 @@ func applyTeamWorkGateForInbound(ctx context.Context, deps *ConsumerDeps, msg bu
 		Embedder:    deps.TeamWorkEmbedder,
 	})
 	result := teamworkclassify.ClassifyWithLLM(ctx, input, provider, model, deps.UsageCaps)
-	source := "evidence"
-	if result.Ambiguous {
-		source = "arbiter"
+	source := result.Source
+	if source == "" {
+		source = "evidence"
 	}
 	slog.Info("team_work_classify: decision", "agent", agentKey, "session", sessionKey, "mode", mode, "decision", result.Decision, "source", source, "self_score", result.SelfScore, "collaboration_score", result.CollaborationScore, "reason", result.Reason)
 	if result.Decision == teamworkclassify.DecisionTeam {
@@ -64,6 +64,7 @@ func applyTeamWorkGateForInbound(ctx context.Context, deps *ConsumerDeps, msg bu
 			OriginalMessage: msg.Content,
 			RequiredTool:    result.RequiredTool,
 			WorkflowHint:    result.WorkflowHint,
+			Assignee:        result.TargetAgentKey,
 		}
 	}
 	return out

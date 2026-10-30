@@ -616,6 +616,9 @@ func TestClassifyWithLLMRuleMatchPermissionGateMember(t *testing.T) {
 	if result.Decision != DecisionSelf {
 		t.Fatalf("member without permission must be gated to self, got %+v", result)
 	}
+	if result.TargetAgentKey != "" {
+		t.Fatalf("member without permission must have TargetAgentKey cleared, got %q", result.TargetAgentKey)
+	}
 }
 
 func TestClassifyWithLLMRuleMatchLeadZeroArbiter(t *testing.T) {
@@ -632,6 +635,9 @@ func TestClassifyWithLLMRuleMatchLeadZeroArbiter(t *testing.T) {
 	}
 	if result.Decision != DecisionTeam || result.TargetAgentKey != "coder-agent" {
 		t.Fatalf("rule result wrong: %+v", result)
+	}
+	if result.Source != "rule" {
+		t.Fatalf("expected source=rule, got %q", result.Source)
 	}
 }
 
@@ -662,5 +668,43 @@ func TestClassifyRuleDecisionIgnoresFallbackAndThreshold(t *testing.T) {
 			got.RequiredTool != baseline.RequiredTool || got.WorkflowHint != baseline.WorkflowHint {
 			t.Fatalf("case %d result %+v differs from baseline %+v", i, got, baseline)
 		}
+	}
+}
+
+func TestClassifySourceProvenance(t *testing.T) {
+	// 1. Decisive evidence
+	inEv := decisiveTeamInput()
+	inEv.TeamRole = "lead"
+	inEv.CanAssignTeamTasks = true
+	resEv := ClassifyWithLLM(context.Background(), inEv, nil, "", nil)
+	if resEv.Source != "evidence" {
+		t.Fatalf("decisive evidence source = %q, want evidence", resEv.Source)
+	}
+
+	// 2. Rule match
+	inRule := decisiveTeamInput()
+	inRule.Message = "fix the bug in internal/foo.go"
+	inRule.TeamRole = "lead"
+	inRule.CanAssignTeamTasks = true
+	inRule.RoutingRules = []teamconfig.RoutingRule{{AgentKey: "coder-agent", Keywords: []string{"fix"}}}
+	resRule := ClassifyWithLLM(context.Background(), inRule, nil, "", nil)
+	if resRule.Source != "rule" {
+		t.Fatalf("rule match source = %q, want rule", resRule.Source)
+	}
+
+	// 3. Ambiguous evidence resolved by arbiter
+	inAmb := ambiguousInput()
+	inAmb.TeamRole = "lead"
+	inAmb.CanAssignTeamTasks = true
+	provider := &fakeArbiterProvider{content: `{"decision":"team","reason":"lead arbiter decided team"}`}
+	resArb := ClassifyWithLLM(context.Background(), inAmb, provider, "m", nil)
+	if resArb.Source != "arbiter" {
+		t.Fatalf("arbiter source = %q, want arbiter", resArb.Source)
+	}
+
+	// 4. Ambiguous evidence with arbiter unavailable
+	resNoArb := ClassifyWithLLM(context.Background(), inAmb, nil, "", nil)
+	if resNoArb.Source != "evidence" {
+		t.Fatalf("unavailable arbiter source = %q, want evidence", resNoArb.Source)
 	}
 }

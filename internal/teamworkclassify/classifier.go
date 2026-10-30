@@ -82,14 +82,17 @@ type Result struct {
 	// and an arbiter (LLM or decision model) may be consulted. False means the
 	// decision is final and consulting an arbiter would only add cost and latency.
 	Ambiguous bool
+	// Source reports provenance: "rule" (heuristic keyword/file rule),
+	// "evidence" (embedding classifier or fallback), or "arbiter" (LLM arbiter).
+	Source string
 }
 
 func Classify(ctx context.Context, input Input) Result {
 	if input.Mode == "" || input.Mode == ModeSpawn {
-		return Result{Decision: DecisionSelf, Reason: "no team or delegate capability"}
+		return Result{Decision: DecisionSelf, Reason: "no team or delegate capability", Source: "evidence"}
 	}
 	if strings.TrimSpace(input.Message) == "" {
-		return Result{Decision: DecisionSelf, Reason: "empty message"}
+		return Result{Decision: DecisionSelf, Reason: "empty message", Source: "evidence"}
 	}
 	// Operator rules run before every heuristic — explicit config beats inference.
 	// Routing.FallbackToSelf and Routing.ConfidenceThreshold do not apply here;
@@ -100,16 +103,17 @@ func Classify(ctx context.Context, input Input) Result {
 			Confidence:     1,
 			Reason:         "matched team routing rule for member " + rule.AgentKey,
 			Mode:           input.Mode,
-			RequiredTool:   "team_tasks",
+			RequiredTool:   requiredToolForMode(input.Mode),
 			WorkflowHint:   routingRuleHint(rule.AgentKey),
 			TargetAgentKey: rule.AgentKey,
+			Source:         "rule",
 		}
 	}
 	if looksCasualOrSmallDirect(input.Message) {
-		return Result{Decision: DecisionSelf, Reason: "message looks casual or direct"}
+		return Result{Decision: DecisionSelf, Reason: "message looks casual or direct", Source: "evidence"}
 	}
 	if input.Embedder == nil {
-		return Result{Decision: DecisionSelf, Reason: "embedding unavailable"}
+		return Result{Decision: DecisionSelf, Reason: "embedding unavailable", Source: "evidence"}
 	}
 
 	timeout := input.Timeout
@@ -121,13 +125,13 @@ func Classify(ctx context.Context, input Input) Result {
 
 	selfDocs, collaborationDocs := splitProfileDocuments(input)
 	if len(selfDocs) == 0 || len(collaborationDocs) == 0 {
-		return Result{Decision: DecisionSelf, Reason: "insufficient collaboration profile"}
+		return Result{Decision: DecisionSelf, Reason: "insufficient collaboration profile", Source: "evidence"}
 	}
 
 	texts := append([]string{input.Message}, append(selfDocs, collaborationDocs...)...)
 	vectors, err := input.Embedder.Embed(ctx, texts)
 	if err != nil || len(vectors) != len(texts) {
-		return Result{Decision: DecisionSelf, Reason: "embedding failed"}
+		return Result{Decision: DecisionSelf, Reason: "embedding failed", Source: "evidence"}
 	}
 	query := vectors[0]
 	selfScore := bestCosine(query, vectors[1:1+len(selfDocs)])
@@ -155,6 +159,7 @@ func Classify(ctx context.Context, input Input) Result {
 			CollaborationScore: collabScore,
 			Mode:               input.Mode,
 			Ambiguous:          true,
+			Source:             "evidence",
 		}
 	case diff > margin && collabScore >= threshold:
 		return Result{
@@ -165,6 +170,7 @@ func Classify(ctx context.Context, input Input) Result {
 			CollaborationScore: collabScore,
 			Mode:               input.Mode,
 			RequiredTool:       requiredToolForMode(input.Mode),
+			Source:             "evidence",
 		}
 	case diff > margin:
 		// Closer to collaboration but below the team threshold — weak absolute
@@ -177,6 +183,7 @@ func Classify(ctx context.Context, input Input) Result {
 			CollaborationScore: collabScore,
 			Mode:               input.Mode,
 			Ambiguous:          true,
+			Source:             "evidence",
 		}
 	default:
 		// diff < -margin: decisively self.
@@ -187,6 +194,7 @@ func Classify(ctx context.Context, input Input) Result {
 			SelfScore:          selfScore,
 			CollaborationScore: collabScore,
 			Mode:               input.Mode,
+			Source:             "evidence",
 		}
 	}
 }
@@ -197,10 +205,11 @@ func ClassifyWithLLM(ctx context.Context, input Input, provider providers.Provid
 
 	switch {
 	case !fallback.Ambiguous:
-		// Evidence decided the outcome; the arbiter would only add cost and
-		// latency. result stays the evidence verdict.
+		// Evidence or rule decided the outcome; the arbiter would only add cost and
+		// latency. result stays the evidence/rule verdict.
 	case input.Mode == "" || input.Mode == ModeSpawn || provider == nil || strings.TrimSpace(model) == "":
 		result = forceSelfDecision(fallback, "arbiter unavailable: ")
+		result.Source = "evidence"
 	default:
 		result = consultArbiter(ctx, input, fallback, provider, model, caps)
 	}
@@ -268,6 +277,7 @@ func consultArbiter(ctx context.Context, input Input, fallback Result, provider 
 	if result.Reason == "" {
 		result.Reason = fallback.Reason
 	}
+	result.Source = "arbiter"
 	return result
 }
 
@@ -275,7 +285,9 @@ func forceSelfDecision(evidence Result, reasonPrefix string) Result {
 	evidence.Decision = DecisionSelf
 	evidence.RequiredTool = ""
 	evidence.WorkflowHint = ""
+	evidence.TargetAgentKey = ""
 	evidence.Reason = reasonPrefix + evidence.Reason
+	evidence.Source = "evidence"
 	return evidence
 }
 
@@ -299,6 +311,7 @@ func applyTeamPermissionGate(input Input, result Result) Result {
 	result.Decision = DecisionSelf
 	result.RequiredTool = ""
 	result.WorkflowHint = ""
+	result.TargetAgentKey = ""
 	reason := "member lacks auto-dispatch team request permission"
 	if !input.MemberRequestsEnabled {
 		reason = "member lacks team request permission"

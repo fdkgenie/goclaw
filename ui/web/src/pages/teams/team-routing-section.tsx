@@ -9,19 +9,15 @@ type RoutingRow = TeamSettingsFormData["routingRules"][number];
 interface TeamRoutingSectionProps {
   members: TeamMemberData[];
   enabled: boolean;
-  fallbackToSelf: boolean;
-  confidenceThreshold: number;
   rules: RoutingRow[];
   onEnabledChange: (v: boolean) => void;
-  onFallbackToSelfChange: (v: boolean) => void;
-  onConfidenceChange: (v: number) => void;
   onRulesChange: (rules: RoutingRow[]) => void;
 }
 
 /** Per-member routing rules — first matching rule wins. */
 export function TeamRoutingSection({
-  members, enabled, fallbackToSelf, confidenceThreshold, rules,
-  onEnabledChange, onFallbackToSelfChange, onConfidenceChange, onRulesChange,
+  members, enabled, rules,
+  onEnabledChange, onRulesChange,
 }: TeamRoutingSectionProps) {
   const { t } = useTranslation("teams");
 
@@ -48,20 +44,6 @@ export function TeamRoutingSection({
         </div>
         {enabled && (
           <>
-            <div className="flex items-center justify-between border-t pt-3">
-              <div>
-                <span className="text-sm font-semibold">{t("settings.routingFallbackToSelf")}</span>
-                <p className="text-xs text-muted-foreground">{t("settings.routingFallbackToSelfDesc")}</p>
-              </div>
-              <Switch checked={fallbackToSelf} onCheckedChange={onFallbackToSelfChange} />
-            </div>
-            <div className="border-t pt-3">
-              <label className="text-sm font-semibold">{t("settings.routingConfidence")}</label>
-              <p className="text-xs text-muted-foreground">{t("settings.routingConfidenceDesc")}</p>
-              <input type="number" min={0.01} max={1} step={0.05} value={confidenceThreshold}
-                onChange={(e) => onConfidenceChange(Math.min(1, Math.max(0.01, parseFloat(e.target.value) || 0.65)))}
-                className="mt-1 w-24 rounded-md border bg-background px-3 py-1.5 text-base md:text-sm" />
-            </div>
             <p className="text-xs text-muted-foreground border-t pt-3">{t("settings.routingRuleOrderHint")}</p>
             {members.map((m) => {
               const r = ruleFor(m.agent_key ?? "");

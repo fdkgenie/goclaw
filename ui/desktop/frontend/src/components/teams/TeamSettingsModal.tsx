@@ -144,8 +144,6 @@ export function TeamSettingsModal({ teamId, onClose, onSaved }: TeamSettingsModa
   const notifyMode = watch('notifyMode')
   const notify = watch('notify')
   const routingEnabled = watch('routingEnabled')
-  const routingFallbackToSelf = watch('routingFallbackToSelf')
-  const routingConfidenceThreshold = watch('routingConfidenceThreshold')
   const routingRules = watch('routingRules')
 
   const updateRule = (agentKey: string, patch: Partial<RoutingRule>) => {
@@ -236,18 +234,6 @@ export function TeamSettingsModal({ teamId, onClose, onSaved }: TeamSettingsModa
             </div>
             {routingEnabled && (
               <>
-                <div className="flex items-center justify-between py-1.5">
-                  <span className="text-sm text-text-secondary">{t('settings.routingFallbackToSelf', 'Fallback to self')}</span>
-                  <button type="button" onClick={() => setValue('routingFallbackToSelf', !routingFallbackToSelf)} className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${routingFallbackToSelf ? 'bg-accent' : 'bg-surface-tertiary border border-border'}`}>
-                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${routingFallbackToSelf ? 'translate-x-4' : ''}`} />
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <label className="block text-xs text-text-muted">{t('settings.routingConfidence', 'Confidence threshold')}</label>
-                  <input type="number" min={0.01} max={1} step={0.01} value={routingConfidenceThreshold}
-                    onChange={(e) => setValue('routingConfidenceThreshold', Number(e.target.value), { shouldValidate: true })}
-                    className="w-full bg-surface-tertiary border border-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent/50" />
-                </div>
                 {members.map((m) => {
                   if (!m.agent_key) return null
                   const r = routingRules.find((x) => x.agent_key === m.agent_key) ?? { agent_key: m.agent_key, keywords: [], file_patterns: [], criteria: '', enabled: true }

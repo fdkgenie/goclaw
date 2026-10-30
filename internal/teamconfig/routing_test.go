@@ -87,6 +87,14 @@ func TestRuleMatchesMessageWordBoundary(t *testing.T) {
 	if !RuleMatchesMessage(rule2, "check go.mod") {
 		t.Fatal("explicit go.mod pattern must match go.mod")
 	}
+
+	globRule := RoutingRule{AgentKey: "coder-agent", FilePatterns: []string{"*.ts"}}
+	if !RuleMatchesMessage(globRule, "fix the bug in app.ts please") {
+		t.Fatal("*.ts pattern must match app.ts")
+	}
+	if RuleMatchesMessage(globRule, "check app.tsx") {
+		t.Fatal("*.ts pattern must not match app.tsx")
+	}
 }
 
 func TestEffectiveRulesHonorsRoutingEnabledFalse(t *testing.T) {

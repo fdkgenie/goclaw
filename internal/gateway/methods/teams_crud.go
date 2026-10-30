@@ -13,6 +13,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
 	"github.com/nextlevelbuilder/goclaw/internal/permissions"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
+	"github.com/nextlevelbuilder/goclaw/internal/teamconfig"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
@@ -339,18 +340,7 @@ func (m *TeamsMethods) handleUpdate(ctx context.Context, client *gateway.Client,
 		BlockerEscalation *struct {
 			Enabled *bool `json:"enabled,omitempty"`
 		} `json:"blocker_escalation,omitempty"`
-		Routing *struct {
-			Enabled             *bool    `json:"enabled,omitempty"`
-			FallbackToSelf      *bool    `json:"fallback_to_self,omitempty"`
-			ConfidenceThreshold *float64 `json:"confidence_threshold,omitempty"`
-			Rules               []struct {
-				AgentKey     string   `json:"agent_key"`
-				Keywords     []string `json:"keywords"`
-				FilePatterns []string `json:"file_patterns"`
-				Criteria     string   `json:"criteria"`
-				Enabled      *bool    `json:"enabled,omitempty"`
-			} `json:"rules,omitempty"`
-		} `json:"routing,omitempty"`
+		Routing *teamconfig.Routing `json:"routing,omitempty"`
 	}
 
 	updates := map[string]any{}
@@ -413,23 +403,15 @@ func (m *TeamsMethods) handleUpdate(ctx context.Context, client *gateway.Client,
 	}
 }
 
-// validateRouting returns a rejection message, or "" when the routing block is
-// writable. Stale rules (agent_key not a current member) are rejected because
-// EffectiveRules would silently drop them at classify time.
-func (m *TeamsMethods) validateRouting(ctx context.Context, teamID uuid.UUID, r *struct {
-	Enabled             *bool    `json:"enabled,omitempty"`
-	FallbackToSelf      *bool    `json:"fallback_to_self,omitempty"`
-	ConfidenceThreshold *float64 `json:"confidence_threshold,omitempty"`
-	Rules               []struct {
-		AgentKey     string   `json:"agent_key"`
-		Keywords     []string `json:"keywords"`
-		FilePatterns []string `json:"file_patterns"`
-		Criteria     string   `json:"criteria"`
-		Enabled      *bool    `json:"enabled,omitempty"`
-	} `json:"rules,omitempty"`
-}) string {
+// validateRouting validates the routing block and sanitizes rules by dropping
+// stale entries whose agent_key is not a current team member (so a departed
+// member's rule never bricks future settings updates).
+func (m *TeamsMethods) validateRouting(ctx context.Context, teamID uuid.UUID, r *teamconfig.Routing) string {
 	if r.ConfidenceThreshold != nil && (*r.ConfidenceThreshold <= 0 || *r.ConfidenceThreshold > 1) {
 		return "routing.confidence_threshold must be in (0,1]"
+	}
+	if len(r.Rules) > 50 {
+		return "routing: at most 50 rules allowed"
 	}
 	if len(r.Rules) == 0 {
 		return ""
@@ -442,14 +424,30 @@ func (m *TeamsMethods) validateRouting(ctx context.Context, teamID uuid.UUID, r 
 	for _, mem := range members {
 		memberKeys[mem.AgentKey] = true
 	}
+	activeRules := make([]teamconfig.RoutingRule, 0, len(r.Rules))
 	for _, rule := range r.Rules {
-		if strings.TrimSpace(rule.AgentKey) == "" {
+		key := strings.TrimSpace(rule.AgentKey)
+		if key == "" {
 			return "routing.rules[].agent_key is required"
 		}
-		if !memberKeys[rule.AgentKey] {
-			return "routing.rules[].agent_key " + rule.AgentKey + " is not a team member"
+		if len(rule.Keywords) > 50 || len(rule.FilePatterns) > 50 {
+			return "routing: at most 50 keywords or file patterns allowed per rule"
+		}
+		for _, kw := range rule.Keywords {
+			if len(kw) > 100 {
+				return "routing: keyword exceeds 100 characters"
+			}
+		}
+		for _, fp := range rule.FilePatterns {
+			if len(fp) > 100 {
+				return "routing: file pattern exceeds 100 characters"
+			}
+		}
+		if memberKeys[key] {
+			activeRules = append(activeRules, rule)
 		}
 	}
+	r.Rules = activeRules
 	return ""
 }
 

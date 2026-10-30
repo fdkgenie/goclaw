@@ -294,9 +294,9 @@ func (m *ChatMethods) applyTeamWorkGate(ctx context.Context, params chatSendPara
 		Embedder: m.teamWorkEmbedder,
 	})
 	result := teamworkclassify.ClassifyWithLLM(ctx, input, loop.Provider(), loop.Model(), m.usageCaps)
-	source := "evidence"
-	if result.Ambiguous {
-		source = "arbiter"
+	source := result.Source
+	if source == "" {
+		source = "evidence"
 	}
 	slog.Info("team_work_classify: ws decision", "session", sessionKey, "agent", params.AgentID, "mode", mode, "decision", result.Decision, "source", source, "self_score", result.SelfScore, "collaboration_score", result.CollaborationScore, "reason", result.Reason)
 	if result.Decision == teamworkclassify.DecisionTeam {
@@ -307,6 +307,7 @@ func (m *ChatMethods) applyTeamWorkGate(ctx context.Context, params chatSendPara
 			OriginalMessage: params.Message,
 			RequiredTool:    result.RequiredTool,
 			WorkflowHint:    result.WorkflowHint,
+			Assignee:        result.TargetAgentKey,
 		}
 	}
 	return out

@@ -97,8 +97,6 @@ export function TeamSettingsTab({ teamId, team, members, onSaved }: TeamSettings
   const allowChannels = watch("allowChannels");
   const denyChannels = watch("denyChannels");
   const routingEnabled = watch("routingEnabled");
-  const routingFallbackToSelf = watch("routingFallbackToSelf");
-  const routingConfidenceThreshold = watch("routingConfidenceThreshold");
   const routingRules = watch("routingRules");
 
   // escalationMode / escalationActions remain uncontrolled (not in schema) — read from team settings directly
@@ -194,8 +192,6 @@ export function TeamSettingsTab({ teamId, team, members, onSaved }: TeamSettings
       <TeamRoutingSection
         members={members}
         enabled={routingEnabled} onEnabledChange={(v) => setValue("routingEnabled", v)}
-        fallbackToSelf={routingFallbackToSelf} onFallbackToSelfChange={(v) => setValue("routingFallbackToSelf", v)}
-        confidenceThreshold={routingConfidenceThreshold} onConfidenceChange={(v) => setValue("routingConfidenceThreshold", v)}
         rules={routingRules} onRulesChange={(v) => setValue("routingRules", v)}
       />
 

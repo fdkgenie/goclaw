@@ -185,7 +185,6 @@ func TestTeamsUpdateRejectsInvalidRouting(t *testing.T) {
 		"threshold negative": {"routing": map[string]any{"confidence_threshold": -0.1}},
 		"empty agent_key":    {"routing": map[string]any{"rules": []map[string]any{{"keywords": []string{"go"}}}}},
 		"blank agent_key":    {"routing": map[string]any{"rules": []map[string]any{{"agent_key": "   "}}}},
-		"stale agent_key":    {"routing": map[string]any{"rules": []map[string]any{{"agent_key": "removed-agent"}}}},
 	}
 	for name, settings := range cases {
 		st.lastSet = nil
@@ -196,6 +195,37 @@ func TestTeamsUpdateRejectsInvalidRouting(t *testing.T) {
 		if st.lastSet != nil {
 			t.Fatalf("%s: invalid write reached UpdateTeam", name)
 		}
+	}
+}
+
+func TestTeamsUpdateSanitizesStaleRoutingRules(t *testing.T) {
+	st, m := newRoutingUpdateFixture("coder-agent")
+	// Save contains a rule for current member "coder-agent" and a rule for departed member "removed-agent"
+	ok, code, _ := callRPC(t, m.handleUpdate, updateParams(st.team.ID, map[string]any{
+		"routing": map[string]any{
+			"enabled": true,
+			"rules": []map[string]any{
+				{"agent_key": "coder-agent", "keywords": []string{"go"}},
+				{"agent_key": "removed-agent", "keywords": []string{"python"}},
+			},
+		},
+	}))
+	if !ok {
+		t.Fatalf("update with stale rule should succeed after sanitization, got code=%s", code)
+	}
+	settings, _ := st.lastSet["settings"].(json.RawMessage)
+	var round struct {
+		Routing struct {
+			Rules []struct {
+				AgentKey string `json:"agent_key"`
+			} `json:"rules"`
+		} `json:"routing"`
+	}
+	if err := json.Unmarshal(settings, &round); err != nil {
+		t.Fatalf("settings not JSON: %v", err)
+	}
+	if len(round.Routing.Rules) != 1 || round.Routing.Rules[0].AgentKey != "coder-agent" {
+		t.Fatalf("expected stale rule to be dropped, got rules: %+v", round.Routing.Rules)
 	}
 }
 

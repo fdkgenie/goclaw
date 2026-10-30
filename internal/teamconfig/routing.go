@@ -121,16 +121,22 @@ func RuleMatchesMessage(rule RoutingRule, message string) bool {
 
 // wordBoundaryMatch is substring match constrained to non-word boundaries.
 // Precompiled regexps would be ideal but the rule list is built per-classify
-// call; a small sync.Map cache keyed on the literal term keeps compilation
+// call; a bounded LRU/cache keyed on the normalized term keeps compilation
 // out of the hot path without leaking patterns.
 func wordBoundaryMatch(term, msg string) bool {
-	if term == "" {
+	re := cachedWordRe(term)
+	if re == nil {
 		return false
 	}
-	return cachedWordRe(term).MatchString(msg)
+	return re.MatchString(msg)
 }
 
-var wordReCache sync.Map // term -> *regexp.Regexp
+const maxCachedRegexps = 512
+
+var (
+	wordReMu    sync.RWMutex
+	wordReCache = make(map[string]*regexp.Regexp)
+)
 
 // cachedWordRe compiles (once) the boundary-anchored pattern for a term.
 //
@@ -138,13 +144,27 @@ var wordReCache sync.Map // term -> *regexp.Regexp
 // not match `google` and `dockerfile` does not match `mydockerfile`.
 // Terms starting with a non-word char (`.go`, `*.ts`) anchor only on the
 // right: the leading punctuation already separates the token, so `.go`
-// correctly matches `internal/foo.go` but not `foo.gopher` or `go.mod`.
+// and `*.ts` correctly match `internal/foo.go` and `app.ts` but not
+// `foo.gopher` or `go.mod`. Leading wildcards (e.g. `*.ts`) are stripped
+// so that glob syntax behaves as file-extension matching.
 // Boundaries are unicode-aware (`\p{L}`/`\p{N}`) so Vietnamese and Chinese
 // keywords behave correctly — Go's ASCII-only `\b` does not.
 func cachedWordRe(term string) *regexp.Regexp {
-	if v, ok := wordReCache.Load(term); ok {
-		return v.(*regexp.Regexp)
+	term = strings.TrimSpace(term)
+	if strings.HasPrefix(term, "*") {
+		term = strings.TrimPrefix(term, "*")
 	}
+	if term == "" {
+		return nil
+	}
+
+	wordReMu.RLock()
+	re, ok := wordReCache[term]
+	wordReMu.RUnlock()
+	if ok {
+		return re
+	}
+
 	q := regexp.QuoteMeta(term)
 	var pattern string
 	if r := firstRune(term); isWordRune(r) {
@@ -152,9 +172,18 @@ func cachedWordRe(term string) *regexp.Regexp {
 	} else {
 		pattern = q + `(?:[^\p{L}\p{N}]|$)`
 	}
-	re := regexp.MustCompile(`(?i)` + pattern)
-	actual, _ := wordReCache.LoadOrStore(term, re)
-	return actual.(*regexp.Regexp)
+	compiled, err := regexp.Compile(`(?i)` + pattern)
+	if err != nil {
+		return nil
+	}
+
+	wordReMu.Lock()
+	if len(wordReCache) >= maxCachedRegexps {
+		wordReCache = make(map[string]*regexp.Regexp)
+	}
+	wordReCache[term] = compiled
+	wordReMu.Unlock()
+	return compiled
 }
 
 func firstRune(s string) rune {
